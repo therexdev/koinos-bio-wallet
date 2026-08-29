@@ -1,16 +1,21 @@
 /* ============================================================
-   Koinos Bio Wallet — server.
+   Koinos Bio Wallet — the Veive smart-account wallet.
 
-   A deliberately small app: static files + a mana sharer. The wallet
-   itself lives in the visitor's PASSKEY (face / fingerprint / PIN);
-   the browser derives the key and signs locally. This server only
-     · serves the page,
-     · answers balance/mana reads,
-     · and co-signs the visitor's transactions as the mana PAYER, so
-       using the wallet costs the visitor nothing.
+   One button, one biometric scan, one REAL smart account on-chain:
+   the server uploads Veive's Account contract for the visitor, installs
+   the shared WebAuthn sign module + signature validator, and registers
+   the visitor's passkey as the account's only authority. From then on
+   the CHAIN verifies every action against the passkey (P-256, on-chain)
+   — the server can't move a thing.
 
-   It holds ONE secret: the sponsor wallet's key. It never sees a
-   visitor key and stores no accounts — there is nothing to store.
+   The server:
+     · serves the page and answers balance/mana reads,
+     · runs the account bootstrap, sponsor-paid (mana sharing), and
+     · co-signs passkey-signed transactions as the mana PAYER.
+
+   Secrets: the sponsor key, plus each account's bootstrap key (powerless
+   once the validator module is live; kept only to heal interrupted
+   bootstraps — data/accounts.json, mode 600).
 
    Zero dependencies beyond koilib. No build step. Runs anywhere Node
    runs (built for Hostinger's Node hosting behind one proxy hop).
@@ -21,21 +26,35 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const chain = require('./tools/chain');
+const veive = require('./tools/veive');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
 const CFG = {
   port: parseInt(process.env.PORT || '3000', 10),
   network: process.env.KOINOS_NETWORK || 'harbinger',
   sponsorWif: process.env.SPONSOR_WIF || '',
-  /* The WebAuthn relying-party id passkeys bind to. Set it to the APEX
-     domain (usekoinos.com) so the same passkey — and therefore the same
-     wallet — works on every *.usekoinos.com app. Must be the page's host
-     or a registrable suffix of it, or the browser refuses the ceremony.
-     Unset = the page's own hostname (fine for local dev). */
+  /* Shared smart-account infrastructure (tools/infra-deploy.js). All three
+     must be set for live smart accounts; otherwise the app runs in demo. */
+  modules: {
+    verifier: (process.env.VERIFIER_ADDR || '').trim(),
+    modSign: (process.env.MOD_SIGN_WEBAUTHN_ADDR || '').trim(),
+    modValidation: (process.env.MOD_VALIDATION_SIGNATURE_ADDR || '').trim(),
+  },
+  /* The WebAuthn relying-party id passkeys bind to. Unset = the page's own
+     hostname — for wallet.usekoinos.com that keeps this app's passkeys fully
+     separate from other usekoinos apps, which is the point of this
+     playground. (Set the apex domain only when you want passkeys shared
+     across *.usekoinos.com.) */
   passkeyRpId: (process.env.PASSKEY_RPID || '').trim(),
+  dataDir: process.env.DATA_DIR || path.join(__dirname, 'data'),
   trustProxyHops: parseInt(process.env.TRUST_PROXY_HOPS || '0', 10),
   minSponsorMana: Number(process.env.MIN_SPONSOR_MANA || 5),
+  /* Account creation burns ~85 mana (a 97KB contract upload + module
+     setup) — the floor keeps a signup from beaching the sharer. */
+  minCreateMana: Number(process.env.MIN_CREATE_MANA || 120),
   maxTransfersPerDayAddr: parseInt(process.env.MAX_TRANSFERS_PER_DAY || '30', 10),
+  maxAccountsPerDayIp: parseInt(process.env.MAX_ACCOUNTS_PER_DAY || '3', 10),
+  maxAccountsPerDayGlobal: parseInt(process.env.MAX_ACCOUNTS_PER_DAY_GLOBAL || '20', 10),
   demo: process.env.DEMO_MODE === '1',
 };
 
@@ -79,9 +98,9 @@ function verifyProof(body, action) {
 
 /* Prepared transactions awaiting the visitor's signature (10-min TTL). */
 const PREPARED = new Map();
-function rememberPrepared(txId, address) {
+function rememberPrepared(txId, address, extra) {
   const ref = crypto.randomBytes(12).toString('hex');
-  PREPARED.set(ref, { txId, address, expires: Date.now() + 10 * 60000 });
+  PREPARED.set(ref, { txId, address, ...extra, expires: Date.now() + 10 * 60000 });
   return ref;
 }
 setInterval(() => {
@@ -95,7 +114,7 @@ function httpError(status, message) {
   return e;
 }
 
-const demoTxid = () => '0x1220' + crypto.randomBytes(30).toString('hex');
+const demoTxid = () => '0x1220' + crypto.randomBytes(32).toString('hex');
 const explorerTx = (txid) => (NETWORKS[CFG.network].explorer ? `${NETWORKS[CFG.network].explorer}/tx/${txid}` : null);
 
 /* ---------------- API ---------------- */
@@ -107,6 +126,7 @@ api.config = async () => {
   return {
     ok: true,
     app: 'Koinos Bio Wallet',
+    accountKind: 'veive',
     network: CFG.network,
     networkLabel: net.label,
     testnet: !!net.testnet,
@@ -115,25 +135,73 @@ api.config = async () => {
     demo: DEMO,
     note: BOOT_NOTE || undefined,
     sponsor: DEMO ? null : chain.sponsorAddress(),
+    modules: (CFG.modules.modSign && !DEMO) ? CFG.modules : null,
     rpId: CFG.passkeyRpId || null,   // null → the page uses its own hostname
   };
+};
+
+/** One tap on the button, existing account unknown → a smart account is
+    born. Answers immediately; the two bootstrap transactions run in the
+    background and /api/account-status reports progress. */
+api.createAccount = async (body, ip) => {
+  if (rateLimited('create:ip:' + ip, CFG.maxAccountsPerDayIp, 24 * 3600000)) {
+    throw httpError(429, 'this connection created several accounts today already — come back tomorrow');
+  }
+  if (!DEMO) {
+    if (veive.accountsCreatedSince(24 * 3600000) >= CFG.maxAccountsPerDayGlobal) {
+      throw httpError(503, 'today\'s free account budget is used up — come back tomorrow');
+    }
+    const sponsorMana = await chain.mana(chain.sponsorAddress());
+    if (sponsorMana < CFG.minCreateMana) {
+      throw httpError(503, 'the sponsor is recharging mana for the next account — try again in a few hours');
+    }
+  }
+  try {
+    const rec = veive.createOrResume({
+      credentialId: body.credentialId, publicKey: body.publicKey, name: body.name,
+    });
+    return { ok: true, demo: DEMO || undefined, ...rec };
+  } catch (e) { throw httpError(400, e.message); }
+};
+
+api.accountStatus = async (params) => {
+  const rec = veive.status(params.get('credentialId'));
+  if (!rec) throw httpError(404, 'no account for that passkey yet');
+  return { ok: true, ...rec };
+};
+
+/** Which account does this passkey open? (Store first, then the chain's
+    own credential index.) */
+api.whoami = async (body) => {
+  const rec = await veive.whoami(body.credentialId);
+  if (!rec) throw httpError(404, 'that passkey has no smart account here — create one first');
+  return { ok: true, ...rec };
 };
 
 api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
-  if (DEMO) return { ok: true, demo: true, koin: 0, mana: 5 };
+  const smart = veive.status(params.get('credentialId')) || undefined;
+  if (DEMO) return { ok: true, demo: true, koin: 0, mana: 5, smart };
   const [koin, mana] = await Promise.all([
     chain.koinBalance(address).catch(() => 0),
     chain.mana(address).catch(() => 0),
   ]);
-  return { ok: true, koin, mana };
+  return { ok: true, koin, mana, smart };
 };
 
-/** Prepare a sponsored KOIN transfer: sponsor pays, visitor signs. */
+/** Prepare a sponsored KOIN transfer: sponsor pays, the account signs.
+    For smart accounts no proof is needed here — a prepared transaction is
+    inert until the passkey signs it and the CHAIN verifies that signature;
+    for plain (legacy v1) addresses the secp proof still applies. */
 api.prepare = async (body, ip) => {
-  const err = verifyProof(body, 'transfer');
-  if (err) throw httpError(400, err);
+  const smart = veive.isSmartAccount(body.address);
+  if (!smart) {
+    const err = verifyProof(body, 'transfer');
+    if (err) throw httpError(400, err);
+  } else if (!chain.isAddr(body.address)) {
+    throw httpError(400, 'a valid Koinos address is required');
+  }
   const address = body.address;
   const to = String(body.to || '').trim();
   if (!chain.isAddr(to)) throw httpError(400, 'a valid destination address is required');
@@ -150,8 +218,11 @@ api.prepare = async (body, ip) => {
   }
 
   if (DEMO) {
-    const ref = rememberPrepared('demo', address);
-    return { ok: true, demo: true, ref, tx: { id: 'demo' } };
+    /* A real-shaped id so the passkey ceremony + signature packing run for
+       real — submit then verifies the packed signature like the live path. */
+    const id = demoTxid();
+    const ref = rememberPrepared(id, address, { demo: true, smart });
+    return { ok: true, demo: true, ref, tx: { id } };
   }
 
   const balance = BigInt(await chain.koinBalanceSats(address));
@@ -163,20 +234,49 @@ api.prepare = async (body, ip) => {
   }
 
   const ops = [await chain.opKoinTransfer(address, to, sats.toString())];
-  const tx = await chain.prepareUserTx(address, ops);
-  const ref = rememberPrepared(tx.id, address);
+  const tx = await chain.prepareUserTx(address, ops, smart ? { rcLimit: chain.K.rcLimitSmart } : {});
+  const ref = rememberPrepared(tx.id, address, { smart });
   return { ok: true, ref, tx };
 };
 
-/** Broadcast a visitor-signed prepared transaction (sponsor co-signs). */
+/** Broadcast a signed prepared transaction (sponsor co-signs as payer).
+    Smart accounts sign with the passkey — the WebAuthn blob is checked for
+    shape, credential and challenge here, then verified for real ON-CHAIN. */
 api.submit = async (body) => {
   const known = PREPARED.get(String(body.ref || ''));
   if (!known || known.expires < Date.now()) throw httpError(400, 'this action expired — start it again');
   PREPARED.delete(String(body.ref));
-  if (known.txId === 'demo') return { ok: true, demo: true, txid: demoTxid(), explorer: null };
-  const txid = await chain.submitCosigned(body.transaction, known.txId, known.address);
+  if (known.demo) {
+    if (known.smart) await demoCheckSmartSignature(body.transaction, known);
+    return { ok: true, demo: true, txid: known.txId, explorer: null };
+  }
+  const txid = known.smart
+    ? await chain.submitSmartCosigned(body.transaction, known.txId, known.address, veive.credentialsFor(known.address))
+    : await chain.submitCosigned(body.transaction, known.txId, known.address);
   return { ok: true, txid, explorer: explorerTx(txid) };
 };
+
+/** Demo-mode teeth: the browser's packed signature must be exactly what
+    the chain would verify — prefix, protobuf shape, known credential,
+    challenge committing to the transaction id. */
+async function demoCheckSmartSignature(tx, known) {
+  const { utils } = require('koilib');
+  const sigs = (tx && tx.signatures) || [];
+  if (sigs.length !== 1) throw httpError(400, 'expected exactly the passkey signature');
+  let auth;
+  try {
+    const blob = utils.decodeBase64url(sigs[0]);
+    if (!(blob[0] === 0xff && blob[1] === 0x02)) throw new Error('missing WebAuthn prefix');
+    auth = await chain.modSignSerializer().deserialize(blob.subarray(2), 'authentication_data');
+  } catch (e) { throw httpError(400, 'not a valid passkey signature: ' + e.message); }
+  const allowed = veive.credentialsFor(known.address);
+  if (allowed.length && !allowed.includes(auth.credential_id)) throw httpError(400, 'signed by an unrecognized passkey');
+  const clientData = JSON.parse(Buffer.from(utils.decodeBase64url(auth.client_data)).toString('utf8'));
+  const expected = utils.encodeBase64url(Buffer.from(known.txId, 'utf8')).replace(/=+$/, '');
+  if (String(clientData.challenge || '').replace(/=+$/, '') !== expected) {
+    throw httpError(400, 'challenge does not commit to this transaction');
+  }
+}
 
 api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });
 
@@ -262,8 +362,14 @@ function readBody(req, maxBytes = 64 * 1024) {
   });
 }
 
-const GET_ROUTES = { '/api/config': api.config, '/api/account': api.account, '/api/health': api.health };
-const POST_ROUTES = { '/api/prepare': api.prepare, '/api/submit': api.submit };
+const GET_ROUTES = {
+  '/api/config': api.config, '/api/account': api.account,
+  '/api/account-status': api.accountStatus, '/api/health': api.health,
+};
+const POST_ROUTES = {
+  '/api/create-account': api.createAccount, '/api/whoami': api.whoami,
+  '/api/prepare': api.prepare, '/api/submit': api.submit,
+};
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -297,20 +403,27 @@ const server = http.createServer(async (req, res) => {
 /* ---------------- boot ---------------- */
 
 (async () => {
-  console.log('Koinos Bio Wallet');
+  console.log('Koinos Bio Wallet — Veive smart accounts');
   console.log(`network:  ${CFG.network}`);
+  const modulesSet = !!(CFG.modules.modSign && CFG.modules.modValidation && CFG.modules.verifier);
   if (!CFG.sponsorWif) {
     DEMO = true;
     BOOT_NOTE = 'no sponsor wallet configured';
     console.log('mode:     DEMO (set SPONSOR_WIF to go live)');
+  } else if (!modulesSet && !DEMO) {
+    DEMO = true;
+    BOOT_NOTE = 'smart-account contracts not deployed yet';
+    console.log('mode:     DEMO — set VERIFIER_ADDR / MOD_SIGN_WEBAUTHN_ADDR / MOD_VALIDATION_SIGNATURE_ADDR (run tools/infra-deploy.js)');
   } else if (!DEMO) {
     try {
       const rpcUrls = await pickRpcs(CFG.network);
-      chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif });
+      chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
       const [sponsorMana, sponsorKoin] = await Promise.all([
         chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
       ]);
       console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
+      console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
+      console.log(`          verifier=${CFG.modules.verifier}`);
     } catch (e) {
       DEMO = true;
       BOOT_NOTE = 'chain unreachable at boot';
@@ -319,6 +432,8 @@ const server = http.createServer(async (req, res) => {
   } else {
     console.log('mode:     DEMO (DEMO_MODE=1)');
   }
+  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
+  if (!DEMO) veive.reconcile();
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);

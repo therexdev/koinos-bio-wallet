@@ -1,0 +1,284 @@
+{
+  "methods": {
+    "is_authorized": {
+      "argument": "modvalidation.authorize_arguments",
+      "return": "modvalidation.authorize_result",
+      "description": "Validate operation by checking allowance",
+      "entry_point": 1730108407,
+      "read_only": false,
+      "entry-point": "0x671f5bf7",
+      "read-only": false
+    },
+    "set_threshold": {
+      "argument": "modvalidationsignature.set_threshold_args",
+      "return": "",
+      "description": "",
+      "entry_point": 169089600,
+      "read_only": false,
+      "entry-point": "0x0a141a40",
+      "read-only": false
+    },
+    "get_threshold": {
+      "argument": "modvalidationsignature.get_threshold_args",
+      "return": "modvalidationsignature.get_threshold_result",
+      "description": "",
+      "entry_point": 16737530,
+      "read_only": true,
+      "entry-point": "0x00ff64fa",
+      "read-only": true
+    },
+    "on_install": {
+      "argument": "modvalidation.on_install_args",
+      "return": "",
+      "description": "",
+      "entry_point": 3548460345,
+      "read_only": false,
+      "entry-point": "0xd3813539",
+      "read-only": false
+    },
+    "manifest": {
+      "argument": "",
+      "return": "modvalidation.manifest",
+      "description": "",
+      "entry_point": 95661042,
+      "read_only": true,
+      "entry-point": "0x05b3abf2",
+      "read-only": true
+    },
+    "on_uninstall": {
+      "argument": "modvalidation.on_uninstall_args",
+      "return": "",
+      "description": "Handles the uninstallation of the module. This method is called when the module is uninstalled. It can include logic for cleanup tasks, such as removing storage or other resources used by the module.",
+      "entry_point": 846787204,
+      "read_only": false,
+      "entry-point": "0x3278f284",
+      "read-only": false
+    },
+    "is_type": {
+      "argument": "modvalidation.is_type_args",
+      "return": "modvalidation.is_type_result",
+      "description": "Checks if the module matches a specific type. This method is called to verify if the module is of a certain type. It returns a boolean indicating whether the module type matches the provided type ID.",
+      "entry_point": 3036447173,
+      "read_only": true,
+      "entry-point": "0xb4fc81c5",
+      "read-only": true
+    }
+  },
+  "types": "CokHCiFtb2R2YWxpZGF0aW9uL21vZHZhbGlkYXRpb24ucHJvdG8SDW1vZHZhbGlkYXRpb24aFGtvaW5vcy9vcHRpb25zLnByb3RvIiUKD29uX2luc3RhbGxfYXJncxISCgRkYXRhGAEgASgMUgRkYXRhIicKEW9uX3VuaW5zdGFsbF9hcmdzEhIKBGRhdGEYASABKAxSBGRhdGEiJwoMaXNfdHlwZV9hcmdzEhcKB3R5cGVfaWQYASABKA1SBnR5cGVJZCImCg5pc190eXBlX3Jlc3VsdBIUCgV2YWx1ZRgBIAEoCFIFdmFsdWUidgoFc2NvcGUSJQoOb3BlcmF0aW9uX3R5cGUYASABKAlSDW9wZXJhdGlvblR5cGUSHwoLZW50cnlfcG9pbnQYAiABKA1SCmVudHJ5UG9pbnQSJQoLY29udHJhY3RfaWQYAyABKAxCBIC1GAZSCmNvbnRyYWN0SWQioQEKCG1hbmlmZXN0EhIKBG5hbWUYASABKAlSBG5hbWUSFwoHdHlwZV9pZBgCIAEoDVIGdHlwZUlkEhgKB3ZlcnNpb24YAyABKAlSB3ZlcnNpb24SIAoLZGVzY3JpcHRpb24YBCABKAlSC2Rlc2NyaXB0aW9uEiwKBnNjb3BlcxgFIAMoCzIULm1vZHZhbGlkYXRpb24uc2NvcGVSBnNjb3BlcyJ5CgljYWxsX2RhdGESHwoLY29udHJhY3RfaWQYASABKAxSCmNvbnRyYWN0SWQSHwoLZW50cnlfcG9pbnQYAiABKA1SCmVudHJ5UG9pbnQSFgoGY2FsbGVyGAMgASgMUgZjYWxsZXISEgoEZGF0YRgEIAEoDFIEZGF0YSJ6ChNhdXRob3JpemVfYXJndW1lbnRzEjUKBHR5cGUYASABKA4yIS5tb2R2YWxpZGF0aW9uLmF1dGhvcml6YXRpb25fdHlwZVIEdHlwZRIsCgRjYWxsGAIgASgLMhgubW9kdmFsaWRhdGlvbi5jYWxsX2RhdGFSBGNhbGwiKAoQYXV0aG9yaXplX3Jlc3VsdBIUCgV2YWx1ZRgBIAEoCFIFdmFsdWUqWQoSYXV0aG9yaXphdGlvbl90eXBlEhEKDWNvbnRyYWN0X2NhbGwQABIbChd0cmFuc2FjdGlvbl9hcHBsaWNhdGlvbhABEhMKD2NvbnRyYWN0X3VwbG9hZBACYgZwcm90bzMKsQIKHG1vZHZhbGlkYXRpb25zaWduYXR1cmUucHJvdG8SFm1vZHZhbGlkYXRpb25zaWduYXR1cmUaFGtvaW5vcy9vcHRpb25zLnByb3RvIiEKCXRocmVzaG9sZBIUCgV2YWx1ZRgBIAEoDVIFdmFsdWUiRAoSc2V0X3RocmVzaG9sZF9hcmdzEhgKBHVzZXIYASABKAxCBIC1GAZSBHVzZXISFAoFdmFsdWUYAiABKA1SBXZhbHVlIkQKEmdldF90aHJlc2hvbGRfYXJncxIYCgR1c2VyGAEgASgMQgSAtRgGUgR1c2VyEhQKBXZhbHVlGAIgASgNUgV2YWx1ZSIsChRnZXRfdGhyZXNob2xkX3Jlc3VsdBIUCgV2YWx1ZRgBIAEoDVIFdmFsdWViBnByb3RvMwocCgtlbXB0eS5wcm90bxIFZW1wdHliBnByb3RvMw==",
+  "koilib_types": {
+    "options": {
+      "syntax": "proto3"
+    },
+    "nested": {
+      "modvalidation": {
+        "nested": {
+          "on_install_args": {
+            "fields": {
+              "data": {
+                "type": "bytes",
+                "id": 1
+              }
+            }
+          },
+          "on_uninstall_args": {
+            "fields": {
+              "data": {
+                "type": "bytes",
+                "id": 1
+              }
+            }
+          },
+          "is_type_args": {
+            "fields": {
+              "type_id": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "is_type_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "scope": {
+            "fields": {
+              "operation_type": {
+                "type": "string",
+                "id": 1
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "contract_id": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "manifest": {
+            "fields": {
+              "name": {
+                "type": "string",
+                "id": 1
+              },
+              "type_id": {
+                "type": "uint32",
+                "id": 2
+              },
+              "version": {
+                "type": "string",
+                "id": 3
+              },
+              "description": {
+                "type": "string",
+                "id": 4
+              },
+              "scopes": {
+                "rule": "repeated",
+                "type": "scope",
+                "id": 5
+              }
+            }
+          },
+          "call_data": {
+            "fields": {
+              "contract_id": {
+                "type": "bytes",
+                "id": 1
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "caller": {
+                "type": "bytes",
+                "id": 3
+              },
+              "data": {
+                "type": "bytes",
+                "id": 4
+              }
+            }
+          },
+          "authorization_type": {
+            "values": {
+              "contract_call": 0,
+              "transaction_application": 1,
+              "contract_upload": 2
+            }
+          },
+          "authorize_arguments": {
+            "fields": {
+              "type": {
+                "type": "authorization_type",
+                "id": 1
+              },
+              "call": {
+                "type": "call_data",
+                "id": 2
+              }
+            }
+          },
+          "authorize_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          }
+        }
+      },
+      "koinos": {
+        "options": {
+          "go_package": "github.com/koinos/koinos-proto-golang/koinos"
+        },
+        "nested": {
+          "bytes_type": {
+            "values": {
+              "BASE64": 0,
+              "BASE58": 1,
+              "HEX": 2,
+              "BLOCK_ID": 3,
+              "TRANSACTION_ID": 4,
+              "CONTRACT_ID": 5,
+              "ADDRESS": 6
+            }
+          },
+          "_btype": {
+            "oneof": [
+              "btype"
+            ]
+          },
+          "btype": {
+            "type": "bytes_type",
+            "id": 50000,
+            "extend": "google.protobuf.FieldOptions",
+            "options": {
+              "proto3_optional": true
+            }
+          }
+        }
+      },
+      "modvalidationsignature": {
+        "nested": {
+          "threshold": {
+            "fields": {
+              "value": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "set_threshold_args": {
+            "fields": {
+              "user": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "value": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "get_threshold_args": {
+            "fields": {
+              "user": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "value": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "get_threshold_result": {
+            "fields": {
+              "value": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          }
+        }
+      },
+      "empty": {}
+    }
+  }
+}

@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package modsignwebauthn;
+
+import "koinos/options.proto";
+
+message credential {
+   string credential_id = 1;
+   bytes public_key = 2;
+   string name = 3;
+   uint64 created_at = 4;
+}
+
+message register_arguments {
+   bytes user = 1 [(koinos.btype) = ADDRESS];
+   credential credential = 2;
+}
+
+message unregister_arguments {
+   bytes user = 1 [(koinos.btype) = ADDRESS];
+   string credential_id = 2;
+}
+
+message authentication_data {
+   string credential_id = 1;
+   bytes signature = 2;
+   bytes authenticator_data = 3;
+   bytes client_data = 4;
+}
+
+message get_credentials_args {
+   bytes user = 1 [(koinos.btype) = ADDRESS];
+}
+
+message get_credentials_result {
+   repeated credential value = 1;
+}
+
+message get_address_by_credential_id_args {
+   string credential_id = 1;
+}
+
+message address {
+   bytes value = 1 [(koinos.btype) = ADDRESS];
+}

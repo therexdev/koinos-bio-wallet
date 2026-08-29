@@ -1,0 +1,191 @@
+/* ============================================================
+   Veive smart-account lifecycle for the Bio Wallet.
+
+   One record per account in data/accounts.json:
+     { address, credentialId, publicKey, name, bootstrapWif,
+       step: 'pending' | 'active' | 'conflict', ts, txs, error? }
+
+   · createOrResume() answers fast — the two on-chain bootstrap
+     transactions (upload Account.wasm, then install modules + register
+     the passkey in ONE atomic transaction) run in the background; the
+     client polls status().
+   · Bootstrap is chain-driven and idempotent: every attempt re-reads
+     what is actually on-chain and only performs the missing steps, so a
+     crash or timeout anywhere leaves nothing to corrupt — reconcile()
+     resumes half-done accounts at boot.
+   · The bootstrap key is the ONLY copy of the account's temporary
+     authority. Once the validator module is live the passkey governs and
+     the key is powerless; we keep it solely to heal interrupted
+     bootstraps. The file is 0600 inside a 0700 dir and never leaves the
+     server.
+   ============================================================ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const chain = require('./chain');
+
+const S = {
+  dataDir: path.join(__dirname, '..', 'data'),
+  demo: false,
+  store: { accounts: {}, byCredential: {} },
+};
+const RUNNING = new Set();
+
+const file = () => path.join(S.dataDir, 'accounts.json');
+
+function configure(opts) {
+  Object.assign(S, opts || {});
+  fs.mkdirSync(S.dataDir, { recursive: true, mode: 0o700 });
+  try {
+    S.store = JSON.parse(fs.readFileSync(file(), 'utf8'));
+    S.store.accounts ||= {}; S.store.byCredential ||= {};
+  } catch (_) { S.store = { accounts: {}, byCredential: {} }; }
+}
+
+function persist() {
+  const tmp = file() + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(S.store, null, 1), { mode: 0o600 });
+  fs.renameSync(tmp, file());
+}
+
+/* ---------------- input validation ---------------- */
+
+const CRED_ID = /^[A-Za-z0-9_-]{16,400}$/;
+
+/* An uncompressed P-256 key in DER SPKI form — exactly what
+   credential.response.getPublicKey() returns for ES256, and the format
+   the sign module stores (it uses the last 64 bytes = X‖Y). */
+const SPKI_P256_HEADER = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
+function validPublicKey(b64u) {
+  try {
+    const der = Buffer.from(require('koilib').utils.decodeBase64url(String(b64u || '')));
+    return der.length === 91 &&
+      der.subarray(0, SPKI_P256_HEADER.length).equals(SPKI_P256_HEADER) &&
+      der[SPKI_P256_HEADER.length] === 0x04;
+  } catch (_) { return false; }
+}
+
+const publicView = (rec) => rec && ({
+  address: rec.address,
+  step: rec.step,
+  txs: rec.txs || {},
+  error: rec.error || undefined,
+  name: rec.name || undefined,
+});
+
+/* ---------------- lifecycle ---------------- */
+
+/** Fast path for the create button: mint the record, kick the on-chain
+    bootstrap in the background, hand back the address immediately. */
+function createOrResume({ credentialId, publicKey, name }) {
+  if (!CRED_ID.test(String(credentialId || ''))) throw new Error('credential id looks wrong');
+  if (!validPublicKey(publicKey)) throw new Error('the passkey did not return a P-256 public key this chain can verify');
+
+  const existingAddr = S.store.byCredential[credentialId];
+  if (existingAddr) {
+    const rec = S.store.accounts[existingAddr];
+    if (rec && rec.step !== 'active' && !S.demo) runBootstrap(rec);
+    return publicView(rec);
+  }
+
+  const key = chain.newAccountKey();
+  const rec = {
+    address: key.getAddress(),
+    credentialId,
+    publicKey: String(publicKey),
+    name: String(name || 'passkey').slice(0, 40),
+    bootstrapWif: key.getPrivateKey('wif'),
+    step: S.demo ? 'active' : 'pending',
+    ts: Date.now(),
+    txs: {},
+  };
+  S.store.accounts[rec.address] = rec;
+  S.store.byCredential[credentialId] = rec.address;
+  persist();
+  if (!S.demo) runBootstrap(rec);
+  return publicView(rec);
+}
+
+async function runBootstrap(rec) {
+  if (RUNNING.has(rec.address) || rec.step === 'active' || rec.step === 'conflict' || !rec.bootstrapWif) return;
+  RUNNING.add(rec.address);
+  try {
+    const key = chain.keyFromWif(rec.bootstrapWif);
+    const r = await chain.bootstrapSmartAccount(key, {
+      credential_id: rec.credentialId,
+      public_key: rec.publicKey,
+      name: rec.name,
+    });
+    rec.txs = { upload: r.uploadTx || rec.txs.upload, setup: r.setupTx || rec.txs.setup };
+    rec.step = 'active';
+    rec.error = undefined;
+    console.log(`[veive] account ${rec.address} active${r.healed ? ' (healed)' : ''}`);
+  } catch (e) {
+    rec.error = chain.humanChainError(e).slice(0, 240);
+    if (/different passkey/i.test(rec.error)) rec.step = 'conflict';
+    if (e && e.uploadTx) rec.txs = { ...rec.txs, upload: e.uploadTx };
+    console.error(`[veive] bootstrap ${rec.address}: ${rec.error}`);
+  } finally {
+    RUNNING.delete(rec.address);
+    try { persist(); } catch (_) {}
+  }
+}
+
+function status(credentialId) {
+  const addr = S.store.byCredential[String(credentialId || '')];
+  return addr ? publicView(S.store.accounts[addr]) : null;
+}
+
+/** credential → account. The store answers first; the chain's own
+    reverse index (get_address_by_credential_id) covers accounts created
+    elsewhere against the same shared modules. */
+async function whoami(credentialId) {
+  const id = String(credentialId || '');
+  if (!CRED_ID.test(id)) return null;
+  const local = status(id);
+  if (local) return local;
+  if (S.demo || !chain.veiveReady()) return null;
+  const addr = await chain.credentialAddress(id).catch(() => null);
+  if (!addr) return null;
+  const rec = {
+    address: addr, credentialId: id, publicKey: '', name: 'passkey',
+    bootstrapWif: '', step: 'active', ts: Date.now(), txs: {}, external: true,
+  };
+  S.store.accounts[addr] = S.store.accounts[addr] || rec;
+  S.store.byCredential[id] = addr;
+  persist();
+  return publicView(S.store.accounts[addr]);
+}
+
+/** Expected credential ids for an address — the submit-path allowlist. */
+function credentialsFor(address) {
+  const rec = S.store.accounts[String(address || '')];
+  return rec ? [rec.credentialId] : [];
+}
+
+function isSmartAccount(address) {
+  return !!S.store.accounts[String(address || '')];
+}
+
+function accountsCreatedSince(ms) {
+  const cutoff = Date.now() - ms;
+  return Object.values(S.store.accounts).filter((r) => r.ts >= cutoff && !r.external).length;
+}
+
+/** Resume every half-bootstrapped account at boot, oldest first. */
+function reconcile() {
+  const pending = Object.values(S.store.accounts)
+    .filter((r) => r.step === 'pending' && r.bootstrapWif)
+    .sort((a, b) => a.ts - b.ts);
+  if (!pending.length) return 0;
+  console.log(`[veive] resuming ${pending.length} unfinished account bootstrap(s)`);
+  (async () => {
+    for (const rec of pending) {
+      await runBootstrap(rec);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  })();
+  return pending.length;
+}
+
+module.exports = { configure, createOrResume, status, whoami, credentialsFor, isSmartAccount, accountsCreatedSince, reconcile };

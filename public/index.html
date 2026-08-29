@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Koinos Bio Wallet</title>
-<meta name="description" content="Your Koinos wallet, sealed by your own biometrics. One scan creates it, the same scan opens it — no password, no seed phrase, no fees.">
+<meta name="description" content="A real Koinos smart account, sealed by your own biometrics. One scan creates it on-chain, the same scan opens it — no password, no seed phrase, no fees. Built on the Veive protocol.">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/wallet.css">
 </head>
@@ -31,23 +31,26 @@
       </svg>
     </div>
     <h1>Your wallet is<br><em>your fingerprint</em></h1>
-    <p class="lead">A real Koinos account, sealed by your own biometrics. One scan creates it —
-      the same scan opens it, on every device your passkeys sync to. No password, no seed
-      phrase, no fees, and no server ever sees your key.</p>
+    <p class="lead">One scan deploys a real <strong>smart account</strong> on Koinos — an on-chain
+      contract whose only key is your passkey (face, fingerprint, or device PIN). The chain
+      itself verifies every action against your biometrics, Veive-protocol style. No password,
+      no seed phrase, no fees — and no key that anyone, including us, could steal.</p>
     <button class="cta" id="btn-go">Create Account or Sign In</button>
-    <p class="alt" id="alt-unlock" hidden>Made your wallet on another device?
+    <p class="alt" id="alt-unlock" hidden>Made your account on another device?
       <a href="#" id="btn-unlock-existing">Open it with a synced passkey</a></p>
     <p class="unsupported" id="no-passkey" hidden>This browser has no biometric passkey support —
       try a phone, or a browser with Face ID / fingerprint / Windows Hello.</p>
-    <p class="note" id="demo-note" hidden>Demo mode — no chain connected yet; actions simulate.</p>
+    <p class="note" id="demo-note" hidden>Demo mode — no chain connected yet; the passkey flow is real, transactions simulate.</p>
   </section>
 
   <!-- ─── Wallet ─── -->
   <section id="view-wallet" class="wallet" hidden>
+    <div class="status" id="activation" hidden></div>
+
     <div class="card addr-card">
-      <div class="k">Your Koinos address</div>
+      <div class="k">Your smart account</div>
       <button class="addr" id="addr" title="Copy address"></button>
-      <div class="hint">Tap to copy. This address is yours on every Koinos app.</div>
+      <div class="hint">Tap to copy. A real contract account on Koinos — yours on every Koinos app.</div>
     </div>
 
     <div class="row">
@@ -71,11 +74,11 @@
     </div>
 
     <div class="card">
-      <div class="k">Backup</div>
-      <p class="hint" style="margin:6px 0 10px">Your passkey re-creates this wallet with a scan — the key below is a
-        belt-and-braces export for other wallets (Kondor etc.). Never share it.</p>
-      <button class="ghost" id="btn-export">Reveal private key</button>
-      <div class="wif" id="wif" hidden></div>
+      <div class="k">How this account works</div>
+      <p class="hint" style="margin:6px 0 0">There is <strong>no private key to back up</strong> — your account is an
+        on-chain contract (Veive protocol) and your passkey is its registered authority. Every send is a biometric
+        signature that the blockchain verifies itself. Losing this device loses nothing: your passkey syncs through
+        iCloud Keychain / Google Password Manager, and the same scan opens the account anywhere.</p>
     </div>
   </section>
 </main>
@@ -85,7 +88,7 @@
   <a href="https://usekoinos.com" target="_blank" rel="noopener">Discover Koinos ↗</a>
 </footer>
 
-<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/app.js"></script>
 </body>

@@ -1,11 +1,14 @@
 {
   "name": "koinos-bio-wallet",
-  "version": "0.1.0",
-  "description": "Your Koinos wallet, sealed by your own biometrics — one passkey scan creates it, the same scan opens it. Feeless via its own mana sharer.",
+  "version": "0.2.0",
+  "description": "Veive-style smart accounts sealed by your own biometrics — one passkey scan deploys a real on-chain account whose only authority is that passkey, verified by the chain itself. Feeless via its own mana sharer.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "keygen": "node tools/keygen.js"
+    "test": "node tests/wire-format.test.js",
+    "keygen": "node tools/keygen.js",
+    "infra-keygen": "node tools/infra-keygen.js",
+    "infra-deploy": "node tools/infra-deploy.js"
   },
   "engines": { "node": ">=18" },
   "dependencies": {

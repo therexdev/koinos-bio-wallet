@@ -20,7 +20,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { Signer, Provider, Contract, Transaction, utils } = require('koilib');
+const { Signer, Provider, Contract, Transaction, Serializer, utils } = require('koilib');
 const { NETWORKS, rpcCandidates } = require('./rpc');
 
 function sanitizeAbi(abi) {
@@ -31,6 +31,13 @@ function sanitizeAbi(abi) {
 }
 const TOKEN_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'abi', 'token-abi.json'))));
 
+/* The Veive smart-account artifacts (see contracts/README.md for provenance). */
+const VENDOR = path.join(__dirname, '..', 'contracts', 'vendor');
+const ACCOUNT_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(VENDOR, 'account', 'account-abi.json'))));
+const MODSIGN_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(VENDOR, 'mod-sign-webauthn', 'modsignwebauthn-abi.json'))));
+const MODVAL_ABI = sanitizeAbi(JSON.parse(fs.readFileSync(path.join(VENDOR, 'mod-validation-signature', 'modvalidationsignature-abi.json'))));
+const ACCOUNT_WASM_PATH = path.join(VENDOR, 'account', 'Account.wasm');
+
 const K = {
   network: 'harbinger',
   rpcs: [],
@@ -38,6 +45,15 @@ const K = {
   /* rc_limit CEILING for a co-signed transfer — mana is only charged for
      what the transaction actually burns (~0.3–1 KOIN for a transfer). */
   rcLimit: '300000000',
+  /* Ceilings for the smart-account paths. Uploading the 97KB Account.wasm
+     burns ~75 mana; a passkey-signed transfer runs the on-chain WebAuthn
+     verification (validator → account → sign module → P-256 verifier),
+     which costs more compute than a plain transfer. */
+  rcLimitUpload: '12000000000',
+  rcLimitSmart: '2000000000',
+  /* Our deployed module addresses (tools/infra-deploy.js). All three set
+     ⇒ the wallet creates Veive-style smart accounts. */
+  modules: { verifier: '', modSign: '', modValidation: '' },
 };
 
 let _provider = null, _sponsor = null, _sponsorAddr = '', _chainId = '';
@@ -170,10 +186,10 @@ async function opKoinTransfer(from, to, valueSats) {
 
 /** Build the exact transaction the visitor must sign: sponsor pays,
     visitor is payee (their nonce, their authority). */
-async function prepareUserTx(userAddr, ops) {
+async function prepareUserTx(userAddr, ops, { rcLimit = K.rcLimit } = {}) {
   const tx = new Transaction({
     provider: provider(),
-    options: { payer: sponsorAddress(), payee: userAddr, rcLimit: K.rcLimit },
+    options: { payer: sponsorAddress(), payee: userAddr, rcLimit },
   });
   for (const op of ops) await tx.pushOperation(op);
   await tx.prepare({ chainId: await chainId() });
@@ -208,6 +224,306 @@ async function submitCosigned(signedTx, preparedId, userAddr) {
   });
 }
 
+/* ============================================================
+   The Veive smart-account layer.
+
+   Every wallet is its own on-chain contract (Veive's audited
+   Account.wasm, uploaded with all three authorize overrides), with
+   two modules installed from our shared deployments:
+     · mod-sign-webauthn (type 3) — verifies passkey assertions via the
+       P-256 verifier contract; the user's credential is registered here.
+     · mod-validation-signature (type 1) — routes every authority check
+       (contract_call, contract_upload, transaction_application) into
+       signature validation with threshold 1.
+   After bootstrap the ONLY thing that can move the account is a WebAuthn
+   assertion over the transaction id — verified by the chain itself.
+
+   Bootstrap is driven by a throwaway secp256k1 key (the account address
+   IS that key's address): while no validator module is installed the
+   account contract falls back to checking transaction signatures against
+   its own address, exactly how Veive's own test suite installs modules.
+   Once the validator lands, that key is powerless; we keep it only to
+   heal interrupted bootstraps.
+   ============================================================ */
+
+const MODULE_TYPE_VALIDATION = 1;
+const MODULE_TYPE_SIGN = 3;
+
+function veiveReady() {
+  return enabled() && !!(K.modules.modSign && K.modules.modValidation);
+}
+
+const accountContractAt = (addr) => new Contract({ id: addr, abi: ACCOUNT_ABI, provider: provider() });
+const modSignContract = () => new Contract({ id: K.modules.modSign, abi: MODSIGN_ABI, provider: provider() });
+
+let _modSignSer = null, _modValSer = null;
+const modSignSerializer = () => (_modSignSer ||= new Serializer(MODSIGN_ABI.koilib_types));
+const modValSerializer = () => (_modValSer ||= new Serializer(MODVAL_ABI.koilib_types));
+
+async function opUploadContract(contractId, wasmBuffer, flags) {
+  const op = {
+    upload_contract: {
+      contract_id: contractId,
+      /* koilib's own encoder — the node's JSON codec wants PADDED base64url. */
+      bytecode: utils.encodeBase64url(wasmBuffer),
+    },
+  };
+  /* contractAuthority hands ALL authority checks to the uploaded contract's
+     own authorize() — for the Veive account that is the module router. */
+  if (flags && flags.contractAuthority) {
+    op.upload_contract.authorizes_call_contract = true;
+    op.upload_contract.authorizes_transaction_application = true;
+    op.upload_contract.authorizes_upload_contract = true;
+  }
+  return op;
+}
+
+/** install_module wrapped in execute_user — the account executes the
+    install on itself (Veive's own installation pattern). */
+async function opInstallModule(accountAddr, moduleTypeId, moduleAddr, scopes) {
+  const acct = accountContractAt(accountAddr).functions;
+  const args = { module_type_id: moduleTypeId, contract_id: moduleAddr };
+  if (scopes && scopes.length) args.scopes = scopes;
+  const { operation: im } = await acct.install_module(args, { onlyOperation: true });
+  const { operation: exec } = await acct.execute_user({
+    operation: {
+      contract_id: im.call_contract.contract_id,
+      entry_point: im.call_contract.entry_point,
+      args: im.call_contract.args,
+    },
+  }, { onlyOperation: true });
+  return exec;
+}
+
+/** register the passkey credential on the sign module — a DIRECT call
+    (not execute_user), authorized by the account (Veive's pattern). */
+async function opRegisterCredential(accountAddr, credential) {
+  const { operation } = await modSignContract().functions.register({
+    user: accountAddr,
+    credential: {
+      credential_id: credential.credential_id,
+      public_key: credential.public_key,
+      name: credential.name || 'passkey',
+    },
+  }, { onlyOperation: true });
+  return operation;
+}
+
+/** The validator's scopes: govern every kind of authority check. */
+let _scopes = null;
+async function defaultScopes() {
+  if (!_scopes) {
+    const ser = modValSerializer();
+    const list = [];
+    for (const operation_type of ['contract_call', 'contract_upload', 'transaction_application']) {
+      list.push(utils.encodeBase64url(await ser.serialize({ operation_type }, 'scope')));
+    }
+    _scopes = list;
+  }
+  return _scopes;
+}
+
+/** Sponsor-paid transaction signed by an account key (bootstrap phase):
+    payer = sponsor, payee = the account (its nonce, its authority). */
+async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
+  key.provider = provider();
+  return queueTx(async () => {
+    const tx = new Transaction({
+      signer: key, provider: provider(),
+      options: { payer: sponsorAddress(), payee: key.getAddress(), rcLimit },
+    });
+    for (const op of ops) await tx.pushOperation(op);
+    await tx.prepare();
+    await tx.sign();
+    /* Sponsor's signature must come FIRST: the chain's payer check walks
+       signatures in order doing secp256k1 recovery and stops at the first
+       match — and it REJECTS the transaction outright if it trips over a
+       non-recoverable entry before matching. Order is load-bearing. */
+    const userSigs = tx.transaction.signatures.slice();
+    tx.transaction.signatures = [];
+    await sponsor().signTransaction(tx.transaction);
+    tx.transaction.signatures = tx.transaction.signatures.concat(userSigs);
+    const send = new Transaction({ provider: provider() });
+    send.transaction = tx.transaction;
+    await sendTolerant(send);
+    try { await waitMined(tx.transaction.id); }
+    catch (e) {
+      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
+      err.txId = tx.transaction.id;
+      err.broadcast = true;
+      throw err;
+    }
+    return tx.transaction.id;
+  });
+}
+
+const MISSING_CONTRACT = /not exist|not found|unable to find|invalid contract|no contract/i;
+
+/** Addresses of modules installed on an account — [] for a bare contract,
+    null when no contract lives at the address yet. */
+async function accountModules(addr) {
+  try {
+    const { result } = await accountContractAt(addr).functions.get_modules({});
+    return (result && result.value) || [];
+  } catch (e) {
+    if (MISSING_CONTRACT.test(humanChainError(e))) return null;
+    throw e;
+  }
+}
+
+/** Credentials registered for an account on OUR sign module. */
+async function accountCredentials(addr) {
+  try {
+    const { result } = await modSignContract().functions.get_credentials({ user: addr });
+    return (result && result.value) || [];
+  } catch (e) {
+    if (MISSING_CONTRACT.test(humanChainError(e))) return [];
+    throw e;
+  }
+}
+
+/** Reverse lookup: which account does a credential belong to? */
+async function credentialAddress(credentialId) {
+  try {
+    const { result } = await modSignContract().functions.get_address_by_credential_id({ credential_id: credentialId });
+    return (result && result.value) || null;
+  } catch (e) {
+    if (MISSING_CONTRACT.test(humanChainError(e))) return null;
+    throw e;
+  }
+}
+
+/** Drive an account from any half-done state to fully bootstrapped.
+    Reads the chain to decide what is missing, so it heals interrupted
+    attempts; each transaction is atomic, so state can't tear mid-step.
+    Returns { address, uploadTx, setupTx, healed } — either tx may be
+    null when that step was already on-chain. */
+async function bootstrapSmartAccount(key, credential) {
+  if (!veiveReady()) throw new Error('smart-account infrastructure is not configured');
+  const address = key.getAddress();
+
+  let mods = await accountModules(address);
+  let uploadTx = null, healed = mods !== null;
+  if (mods === null) {
+    const wasm = fs.readFileSync(ACCOUNT_WASM_PATH);
+    try {
+      uploadTx = await sendAsAccount(key,
+        [await opUploadContract(address, wasm, { contractAuthority: true })],
+        { rcLimit: K.rcLimitUpload });
+    } catch (e) {
+      if (!e.broadcast) throw e; // ambiguous send: fall through, the re-read decides
+      uploadTx = e.txId || null;
+    }
+    mods = await accountModules(address);
+    if (mods === null) throw new Error('account contract did not appear on chain');
+  }
+
+  const wantSign = !mods.includes(K.modules.modSign);
+  const wantValidator = !mods.includes(K.modules.modValidation);
+  const creds = await accountCredentials(address);
+  const wantCredential = !creds.some((c) => c.credential_id === credential.credential_id);
+
+  if (!wantSign && !wantValidator && !wantCredential) {
+    return { address, uploadTx, setupTx: null, healed };
+  }
+  if (wantCredential && !wantValidator) {
+    /* The validator is live, so only the passkey can authorize register —
+       the bootstrap key can't help here. (Normal bootstraps never hit
+       this: setup is one atomic transaction.) */
+    throw new Error('account is already governed by a different passkey');
+  }
+
+  const ops = [];
+  if (wantSign) ops.push(await opInstallModule(address, MODULE_TYPE_SIGN, K.modules.modSign));
+  if (wantCredential) ops.push(await opRegisterCredential(address, credential));
+  if (wantValidator) ops.push(await opInstallModule(address, MODULE_TYPE_VALIDATION, K.modules.modValidation, await defaultScopes()));
+
+  let setupTx = null, lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 4000 + attempt * 2000));
+    try { setupTx = await sendAsAccount(key, ops); lastErr = null; break; }
+    catch (e) {
+      lastErr = e;
+      if (e.broadcast) { // timed out but may have mined — the chain decides
+        const now = await accountModules(address);
+        if (now && now.includes(K.modules.modValidation)) { setupTx = e.txId || 'confirmed'; lastErr = null; break; }
+      }
+    }
+  }
+  if (lastErr) {
+    const err = new Error(`account ${address} uploaded but module setup failed: ${humanChainError(lastErr)}`);
+    err.address = address; err.uploadTx = uploadTx;
+    throw err;
+  }
+  return { address, uploadTx, setupTx, healed };
+}
+
+/** Co-sign and broadcast a passkey-signed transaction. The browser sends
+    exactly one signature — the 0xFF02 WebAuthn blob; we verify it is
+    well-formed, from a credential we expected, over THIS transaction —
+    then the sponsor signs as payer and the CHAIN does the real
+    verification (P-256, challenge, credential registry). */
+async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
+  if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
+  const recomputed = Transaction.computeTransactionId(signedTx.header);
+  if (recomputed !== preparedId) throw new Error('transaction header was altered');
+  const sigs = Array.isArray(signedTx.signatures) ? signedTx.signatures : [];
+  if (sigs.length !== 1) throw new Error('expected exactly the passkey signature');
+
+  let auth;
+  try {
+    const blob = utils.decodeBase64url(sigs[0]);
+    if (!(blob.length > 2 && blob[0] === 0xff && blob[1] === 0x02)) throw new Error('missing WebAuthn prefix');
+    auth = await modSignSerializer().deserialize(blob.subarray(2), 'authentication_data');
+  } catch (e) {
+    throw new Error(`not a valid passkey signature: ${e.message}`);
+  }
+  if (Array.isArray(expectedCredentialIds) && expectedCredentialIds.length &&
+      !expectedCredentialIds.includes(auth.credential_id)) {
+    throw new Error('signed by an unrecognized passkey');
+  }
+  /* Cheap pre-flight of the challenge rule — catches a client bug before
+     burning sponsor mana on a doomed broadcast. */
+  try {
+    const clientData = JSON.parse(Buffer.from(utils.decodeBase64url(auth.client_data)).toString('utf8'));
+    const expected = utils.encodeBase64url(Buffer.from(preparedId, 'utf8')).replace(/=+$/, '');
+    if (String(clientData.challenge || '').replace(/=+$/, '') !== expected) {
+      throw new Error('challenge does not commit to this transaction');
+    }
+  } catch (e) {
+    throw new Error(`passkey signature rejected: ${e.message}`);
+  }
+
+  const clean = {
+    id: signedTx.id, header: signedTx.header,
+    operations: signedTx.operations, signatures: [],
+  };
+  return queueTx(async () => {
+    /* Sponsor first, blob second — see sendAsAccount for why order matters. */
+    await sponsor().signTransaction(clean);
+    clean.signatures = clean.signatures.concat(sigs);
+    const tx = new Transaction({ provider: provider() });
+    tx.transaction = clean;
+    await sendTolerant(tx);
+    try { await waitMined(clean.id); }
+    catch (e) {
+      const err = new Error(`transaction ${clean.id} not confirmed: ${humanChainError(e)}`);
+      err.txId = clean.id;
+      err.broadcast = true;
+      throw err;
+    }
+    return clean.id;
+  });
+}
+
+function newAccountKey() {
+  const signer = new Signer({ privateKey: require('crypto').randomBytes(32).toString('hex') });
+  return signer;
+}
+function keyFromWif(wif) {
+  return Signer.fromWif(wif);
+}
+
 /** Does this signature over `message` belong to `addr`?
     (signMessage = sign(sha256(message)) in koilib.) */
 function verifyAuthSignature(message, signatureB64, addr) {
@@ -224,4 +540,10 @@ module.exports = {
   koinBalance, koinBalanceSats, mana, headInfo,
   humanChainError, waitMined,
   opKoinTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
+  /* Veive smart-account layer */
+  veiveReady, newAccountKey, keyFromWif,
+  accountModules, accountCredentials, credentialAddress,
+  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount,
+  opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
+  modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,
 };

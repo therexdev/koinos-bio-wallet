@@ -1,0 +1,496 @@
+{
+  "methods": {
+    "execute": {
+      "argument": "account.execute_args",
+      "return": "",
+      "description": "Executes the given operation after performing pre-checks and post-checks. This method ensures that the caller is not itself and is not a registered execution module, performs pre-checks using all registered hook modules, executes the operation using all registered executor modules, and performs post-checks using all registered hook modules.",
+      "entry_point": 3194740712,
+      "read_only": false,
+      "entry-point": "0xbe6bdfe8",
+      "read-only": false
+    },
+    "execute_executor": {
+      "argument": "account.execute_executor_args",
+      "return": "",
+      "description": "Executes the given operation if the caller is a registered execution module. This method ensures that the caller is not itself and is a registered execution module, performs pre-checks using all registered hook modules, executes the operation using all registered executor modules, and performs post-checks using all registered hook modules.",
+      "entry_point": 1481480674,
+      "read_only": false,
+      "entry-point": "0x584d99e2",
+      "read-only": false
+    },
+    "execute_user": {
+      "argument": "account.execute_user_args",
+      "return": "",
+      "description": "Executes a user operation directly. This method ensures that the caller is allowed, and then directly calls the contract's entry point with the provided arguments.",
+      "entry_point": 265474048,
+      "read_only": false,
+      "entry-point": "0x0fd2d000",
+      "read-only": false
+    },
+    "install_module": {
+      "argument": "account.install_module_args",
+      "return": "",
+      "description": "Installs a new module of the specified type. This method adds a new module to the appropriate storage map based on the module type.",
+      "entry_point": 3730713190,
+      "read_only": false,
+      "entry-point": "0xde5e2a66",
+      "read-only": false
+    },
+    "uninstall_module": {
+      "argument": "account.uninstall_module_args",
+      "return": "",
+      "description": "Uninstalls a module of the specified type. This method removes a module from the appropriate storage map based on the module type.",
+      "entry_point": 2537446827,
+      "read_only": false,
+      "entry-point": "0x973e5dab",
+      "read-only": false
+    },
+    "is_module_installed": {
+      "argument": "account.is_module_installed_args",
+      "return": "account.is_module_installed_result",
+      "description": "Checks if a module is installed. This method returns a boolean indicating whether the specified module is installed, based on the module type.",
+      "entry_point": 518820941,
+      "read_only": true,
+      "entry-point": "0x1eec944d",
+      "read-only": true
+    },
+    "is_module_type_supported": {
+      "argument": "account.is_module_type_supported_args",
+      "return": "account.is_module_type_supported_result",
+      "description": "Checks if a module type is supported. This method returns a boolean indicating whether the specified module type is supported.",
+      "entry_point": 1351649402,
+      "read_only": true,
+      "entry-point": "0x5090887a",
+      "read-only": true
+    },
+    "get_modules": {
+      "argument": "",
+      "return": "account.get_modules_result",
+      "description": "Retrieves all installed modules. This method returns a list of all installed modules across all types.",
+      "entry_point": 1551264025,
+      "read_only": true,
+      "entry-point": "0x5c766919",
+      "read-only": true
+    },
+    "is_valid_signature": {
+      "argument": "account.is_valid_signature_args",
+      "return": "account.is_valid_signature_result",
+      "description": "Validates the signature by invoking the validation logic. This method checks the validity of a signature using all registered validator modules. The signature is valid if AT LEAST one of the validators is valid.",
+      "entry_point": 1253549243,
+      "read_only": false,
+      "entry-point": "0x4ab7a4bb",
+      "read-only": false
+    },
+    "is_valid_operation": {
+      "argument": "account.is_valid_operation_args",
+      "return": "account.is_valid_operation_result",
+      "description": "Validates an operation by invoking the validation logic. This method checks the validity of an operation using all registered validator modules. The operation is valid if ALL validators are valid.",
+      "entry_point": 4284997082,
+      "read_only": false,
+      "entry-point": "0xff67ddda",
+      "read-only": false
+    },
+    "init_account": {
+      "argument": "account.init_account_args",
+      "return": "",
+      "description": "Initializes the account. Placeholder for the account initialization logic.",
+      "entry_point": 3079649081,
+      "read_only": false,
+      "entry-point": "0xb78fb739",
+      "read-only": false
+    },
+    "test": {
+      "argument": "",
+      "return": "",
+      "description": "",
+      "entry_point": 2676412545,
+      "read_only": false,
+      "entry-point": "0x9f86d081",
+      "read-only": false
+    },
+    "authorize": {
+      "argument": "authority.authorize_arguments",
+      "return": "authority.authorize_result",
+      "description": "Authorizes an operation. This method checks if a given operation is authorized based on the type and the provided arguments.",
+      "entry_point": 1244511632,
+      "read_only": false,
+      "entry-point": "0x4a2dbd90",
+      "read-only": false
+    },
+    "manifest": {
+      "argument": "",
+      "return": "account.manifest",
+      "description": "",
+      "entry_point": 95661042,
+      "read_only": true,
+      "entry-point": "0x05b3abf2",
+      "read-only": true
+    }
+  },
+  "types": "CtwMCg1hY2NvdW50LnByb3RvEgdhY2NvdW50GhRrb2lub3Mvb3B0aW9ucy5wcm90byIFCgNtb2QibAoOY2FsbF9vcGVyYXRpb24SJQoLY29udHJhY3RfaWQYASABKAxCBIC1GAZSCmNvbnRyYWN0SWQSHwoLZW50cnlfcG9pbnQYAiABKA1SCmVudHJ5UG9pbnQSEgoEYXJncxgDIAEoDFIEYXJncyJFCgxleGVjdXRlX2FyZ3MSNQoJb3BlcmF0aW9uGAEgASgLMhcuYWNjb3VudC5jYWxsX29wZXJhdGlvblIJb3BlcmF0aW9uIk4KFWV4ZWN1dGVfZXhlY3V0b3JfYXJncxI1CglvcGVyYXRpb24YASABKAsyFy5hY2NvdW50LmNhbGxfb3BlcmF0aW9uUglvcGVyYXRpb24iSgoRZXhlY3V0ZV91c2VyX2FyZ3MSNQoJb3BlcmF0aW9uGAEgASgLMhcuYWNjb3VudC5jYWxsX29wZXJhdGlvblIJb3BlcmF0aW9uIo4BChNpbnN0YWxsX21vZHVsZV9hcmdzEiQKDm1vZHVsZV90eXBlX2lkGAEgASgNUgxtb2R1bGVUeXBlSWQSJQoLY29udHJhY3RfaWQYAiABKAxCBIC1GAZSCmNvbnRyYWN0SWQSFgoGc2NvcGVzGAMgAygMUgZzY29wZXMSEgoEZGF0YRgEIAEoDFIEZGF0YSJ4ChV1bmluc3RhbGxfbW9kdWxlX2FyZ3MSJAoObW9kdWxlX3R5cGVfaWQYASABKA1SDG1vZHVsZVR5cGVJZBIlCgtjb250cmFjdF9pZBgCIAEoDEIEgLUYBlIKY29udHJhY3RJZBISCgRkYXRhGAMgASgMUgRkYXRhInsKGGlzX21vZHVsZV9pbnN0YWxsZWRfYXJncxIkCg5tb2R1bGVfdHlwZV9pZBgBIAEoDVIMbW9kdWxlVHlwZUlkEiUKC2NvbnRyYWN0X2lkGAIgASgMQgSAtRgGUgpjb250cmFjdElkEhIKBGRhdGEYAyABKAxSBGRhdGEiMgoaaXNfbW9kdWxlX2luc3RhbGxlZF9yZXN1bHQSFAoFdmFsdWUYASABKAhSBXZhbHVlIkUKHWlzX21vZHVsZV90eXBlX3N1cHBvcnRlZF9hcmdzEiQKDm1vZHVsZV90eXBlX2lkGAEgASgNUgxtb2R1bGVUeXBlSWQiNwofaXNfbW9kdWxlX3R5cGVfc3VwcG9ydGVkX3Jlc3VsdBIUCgV2YWx1ZRgBIAEoCFIFdmFsdWUiMAoSZ2V0X21vZHVsZXNfcmVzdWx0EhoKBXZhbHVlGAEgAygMQgSAtRgGUgV2YWx1ZSJwChdpc192YWxpZF9zaWduYXR1cmVfYXJncxIcCgZzZW5kZXIYASABKAxCBIC1GAZSBnNlbmRlchIcCglzaWduYXR1cmUYAiABKAxSCXNpZ25hdHVyZRIZCgV0eF9pZBgDIAEoDEIEgLUYAlIEdHhJZCIxChlpc192YWxpZF9zaWduYXR1cmVfcmVzdWx0EhQKBXZhbHVlGAEgASgIUgV2YWx1ZSJQChdpc192YWxpZF9vcGVyYXRpb25fYXJncxI1CglvcGVyYXRpb24YASABKAsyFy5hY2NvdW50LmNhbGxfb3BlcmF0aW9uUglvcGVyYXRpb24iMQoZaXNfdmFsaWRfb3BlcmF0aW9uX3Jlc3VsdBIUCgV2YWx1ZRgBIAEoCFIFdmFsdWUiJwoRaW5pdF9hY2NvdW50X2FyZ3MSEgoEZGF0YRgBIAEoDFIEZGF0YSIvChFtb2R1bGVfdmFsaWRhdGlvbhIaCgV2YWx1ZRgBIAEoDEIEgLUYBlIFdmFsdWUiKwoNbW9kdWxlc19ob29rcxIaCgV2YWx1ZRgBIAMoDEIEgLUYBlIFdmFsdWUiLwoRbW9kdWxlc19leGVjdXRpb24SGgoFdmFsdWUYASADKAxCBIC1GAZSBXZhbHVlIikKC21vZHVsZV9zaWduEhoKBXZhbHVlGAEgAygMQgSAtRgGUgV2YWx1ZSJRCghtYW5pZmVzdBIYCgd2ZXJzaW9uGAEgASgJUgd2ZXJzaW9uEisKEXN1cHBvcnRlZF9tb2R1bGVzGAIgAygNUhBzdXBwb3J0ZWRNb2R1bGVzYgZwcm90bzMKjwQKHGtvaW5vcy9jaGFpbi9hdXRob3JpdHkucHJvdG8SDGtvaW5vcy5jaGFpbhoUa29pbm9zL29wdGlvbnMucHJvdG8ifwoJY2FsbF9kYXRhEiUKC2NvbnRyYWN0X2lkGAEgASgMQgSAtRgGUgpjb250cmFjdElkEh8KC2VudHJ5X3BvaW50GAIgASgNUgplbnRyeVBvaW50EhYKBmNhbGxlchgDIAEoDFIGY2FsbGVyEhIKBGRhdGEYBCABKAxSBGRhdGEihgEKE2F1dGhvcml6ZV9hcmd1bWVudHMSNAoEdHlwZRgBIAEoDjIgLmtvaW5vcy5jaGFpbi5hdXRob3JpemF0aW9uX3R5cGVSBHR5cGUSMAoEY2FsbBgCIAEoCzIXLmtvaW5vcy5jaGFpbi5jYWxsX2RhdGFIAFIEY2FsbIgBAUIHCgVfY2FsbCIoChBhdXRob3JpemVfcmVzdWx0EhQKBXZhbHVlGAEgASgIUgV2YWx1ZSpZChJhdXRob3JpemF0aW9uX3R5cGUSEQoNY29udHJhY3RfY2FsbBAAEhsKF3RyYW5zYWN0aW9uX2FwcGxpY2F0aW9uEAESEwoPY29udHJhY3RfdXBsb2FkEAJCNFoyZ2l0aHViLmNvbS9rb2lub3Mva29pbm9zLXByb3RvLWdvbGFuZy9rb2lub3MvY2hhaW5iBnByb3RvMwocCgtlbXB0eS5wcm90bxIFZW1wdHliBnByb3RvMw==",
+  "koilib_types": {
+    "nested": {
+      "account": {
+        "nested": {
+          "mod": {
+            "fields": {}
+          },
+          "call_operation": {
+            "fields": {
+              "contract_id": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "args": {
+                "type": "bytes",
+                "id": 3
+              }
+            }
+          },
+          "execute_args": {
+            "fields": {
+              "operation": {
+                "type": "call_operation",
+                "id": 1
+              }
+            }
+          },
+          "execute_executor_args": {
+            "fields": {
+              "operation": {
+                "type": "call_operation",
+                "id": 1
+              }
+            }
+          },
+          "execute_user_args": {
+            "fields": {
+              "operation": {
+                "type": "call_operation",
+                "id": 1
+              }
+            }
+          },
+          "install_module_args": {
+            "fields": {
+              "module_type_id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "contract_id": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "scopes": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 3
+              },
+              "data": {
+                "type": "bytes",
+                "id": 4
+              }
+            }
+          },
+          "uninstall_module_args": {
+            "fields": {
+              "module_type_id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "contract_id": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "data": {
+                "type": "bytes",
+                "id": 3
+              }
+            }
+          },
+          "is_module_installed_args": {
+            "fields": {
+              "module_type_id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "contract_id": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "data": {
+                "type": "bytes",
+                "id": 3
+              }
+            }
+          },
+          "is_module_installed_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "is_module_type_supported_args": {
+            "fields": {
+              "module_type_id": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "is_module_type_supported_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "get_modules_result": {
+            "fields": {
+              "value": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "is_valid_signature_args": {
+            "fields": {
+              "sender": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "signature": {
+                "type": "bytes",
+                "id": 2
+              },
+              "tx_id": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "is_valid_signature_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "is_valid_operation_args": {
+            "fields": {
+              "operation": {
+                "type": "call_operation",
+                "id": 1
+              }
+            }
+          },
+          "is_valid_operation_result": {
+            "fields": {
+              "value": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "init_account_args": {
+            "fields": {
+              "data": {
+                "type": "bytes",
+                "id": 1
+              }
+            }
+          },
+          "module_validation": {
+            "fields": {
+              "value": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "modules_hooks": {
+            "fields": {
+              "value": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "modules_execution": {
+            "fields": {
+              "value": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "module_sign": {
+            "fields": {
+              "value": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "manifest": {
+            "fields": {
+              "version": {
+                "type": "string",
+                "id": 1
+              },
+              "supported_modules": {
+                "rule": "repeated",
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          }
+        }
+      },
+      "koinos": {
+        "options": {
+          "go_package": "github.com/koinos/koinos-proto-golang/koinos"
+        },
+        "nested": {
+          "bytes_type": {
+            "values": {
+              "BASE64": 0,
+              "BASE58": 1,
+              "HEX": 2,
+              "BLOCK_ID": 3,
+              "TRANSACTION_ID": 4,
+              "CONTRACT_ID": 5,
+              "ADDRESS": 6
+            }
+          },
+          "_btype": {
+            "oneof": [
+              "btype"
+            ]
+          },
+          "btype": {
+            "type": "bytes_type",
+            "id": 50000,
+            "extend": "google.protobuf.FieldOptions",
+            "options": {
+              "proto3_optional": true
+            }
+          },
+          "chain": {
+            "options": {
+              "go_package": "github.com/koinos/koinos-proto-golang/koinos/chain"
+            },
+            "nested": {
+              "authorization_type": {
+                "values": {
+                  "contract_call": 0,
+                  "transaction_application": 1,
+                  "contract_upload": 2
+                }
+              },
+              "call_data": {
+                "fields": {
+                  "contract_id": {
+                    "type": "bytes",
+                    "id": 1,
+                    "options": {
+                      "(btype)": "ADDRESS"
+                    }
+                  },
+                  "entry_point": {
+                    "type": "uint32",
+                    "id": 2
+                  },
+                  "caller": {
+                    "type": "bytes",
+                    "id": 3
+                  },
+                  "data": {
+                    "type": "bytes",
+                    "id": 4
+                  }
+                }
+              },
+              "authorize_arguments": {
+                "oneofs": {
+                  "_call": {
+                    "oneof": [
+                      "call"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": {
+                    "type": "authorization_type",
+                    "id": 1
+                  },
+                  "call": {
+                    "type": "call_data",
+                    "id": 2,
+                    "options": {
+                      "proto3_optional": true
+                    }
+                  }
+                }
+              },
+              "authorize_result": {
+                "fields": {
+                  "value": {
+                    "type": "bool",
+                    "id": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "empty": {}
+    }
+  }
+}

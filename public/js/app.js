@@ -1,32 +1,19 @@
-/* Koinos Bio Wallet — the whole app. One button in, then a plain wallet:
-   address, balances, sponsored send, key export. The key lives in
-   localStorage between visits and is ALWAYS re-derivable from the passkey. */
+/* Koinos Bio Wallet — the Veive smart-account app. One button in:
+   a new passkey mints a REAL smart account on-chain (server-bootstrapped,
+   mana-sponsored); the same scan signs you back in anywhere the passkey
+   syncs. Sends are authorized by WebAuthn assertions the CHAIN verifies. */
 'use strict';
 
 (async () => {
   const $ = (s) => document.querySelector(s);
-  const LS_WIF = 'bw_wif';
+  const LS_ADDR = 'bw_smart_addr';
 
-  /* ---------------- tiny wallet core ---------------- */
-  let signer = null;
-  function loadKey() {
-    if (signer) return true;
-    let wif = null;
-    try { wif = localStorage.getItem(LS_WIF); } catch (_) {}
-    if (!wif) return false;
-    try { signer = Signer.fromWif(wif); return true; } catch (_) { return false; }
-  }
-  function adoptWif(wif) {
-    try { localStorage.setItem(LS_WIF, wif); } catch (_) {}
-    signer = Signer.fromWif(wif);
-    return signer.getAddress();
-  }
-  const address = () => (loadKey() ? signer.getAddress() : null);
-  async function proof(action) {
-    const ts = Date.now();
-    const sig = await signer.signMessage(`koinos-bio-wallet:${action}:${ts}`);
-    return { address: signer.getAddress(), ts, sig: btoa(String.fromCharCode(...sig)) };
-  }
+  let ADDRESS = null;      // the smart account (a contract address)
+  let ACTIVE = false;      // bootstrap finished — sends unlocked
+  let POLL = null;
+
+  const storeAddr = (a) => { try { a ? localStorage.setItem(LS_ADDR, a) : localStorage.removeItem(LS_ADDR); } catch (_) {} };
+  const storedAddr = () => { try { return localStorage.getItem(LS_ADDR); } catch (_) { return null; } };
 
   /* ---------------- api ---------------- */
   async function api(path, body) {
@@ -34,7 +21,7 @@
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : undefined);
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'request failed');
+    if (!r.ok) { const e = new Error(data.error || 'request failed'); e.status = r.status; throw e; }
     return data;
   }
 
@@ -55,6 +42,36 @@
     if (wallet) paint();
   };
 
+  /* Activation banner + send gating: a fresh account exists the moment the
+     passkey does, but sends unlock when the contract is live on-chain. */
+  function setStep(step, error) {
+    ACTIVE = step === 'active';
+    const box = $('#activation');
+    const send = $('#btn-send');
+    if (ACTIVE) { box.hidden = true; send.disabled = false; stopPoll(); return; }
+    box.hidden = false;
+    send.disabled = true;
+    box.className = 'status' + (step === 'conflict' || error ? ' err' : '');
+    box.textContent =
+      step === 'conflict' ? 'This account answers to a different passkey — sign in with that one.' :
+      error ? 'Setup hit a snag — retrying: ' + error :
+      'Your smart account is being written on-chain (a real contract, mana-sponsored) — sends unlock in a minute…';
+  }
+  function stopPoll() { if (POLL) { clearInterval(POLL); POLL = null; } }
+  function pollStatus() {
+    stopPoll();
+    const id = Passkey.storedId();
+    if (!id) return;
+    POLL = setInterval(async () => {
+      try {
+        const st = await api('/api/account-status?credentialId=' + encodeURIComponent(id));
+        setStep(st.step, st.error);
+        if (st.step === 'active') paint();
+        if (st.step === 'conflict') stopPoll();
+      } catch (_) {}
+    }, 3000);
+  }
+
   /* ---------------- landing: THE button ---------------- */
   const go = $('#btn-go');
   const ready = await Passkey.platformReady();
@@ -67,29 +84,48 @@
 
   function friendly(e) {
     if (e && e.name === 'NotAllowedError') return 'Prompt closed — nothing changed';
-    if (e && e.name === 'InvalidStateError') return 'This device already holds a wallet passkey — signing you in…';
+    if (e && e.name === 'InvalidStateError') return 'This device already holds an account passkey — signing you in…';
     return (e && e.message) || 'Passkey ceremony failed';
+  }
+
+  async function signIn() {
+    const credentialId = await Passkey.identify();
+    const who = await api('/api/whoami', { credentialId });
+    ADDRESS = who.address; storeAddr(ADDRESS);
+    setStep(who.step, who.error);
+    if (who.step !== 'active') pollStatus();
+    show(true);
+  }
+
+  async function createAccount() {
+    let made;
+    try { made = await Passkey.createCredential(); }
+    catch (e) {
+      if (e && e.name === 'InvalidStateError') return signIn(); // this device already has our passkey
+      throw e;
+    }
+    const rec = await api('/api/create-account', {
+      credentialId: made.credentialId, publicKey: made.publicKey, name: 'passkey',
+    });
+    ADDRESS = rec.address; storeAddr(ADDRESS);
+    setStep(rec.step, rec.error);
+    if (rec.step !== 'active') pollStatus();
+    show(true);
   }
 
   async function enter(create) {
     go.disabled = true;
     try {
-      let wif;
-      if (create) {
-        try { wif = await Passkey.create(); }
-        catch (e) {
-          /* The device already has our passkey (cleared browser data) —
-             fall through to a sign-in with it instead of failing. */
-          if (e && e.name === 'InvalidStateError') wif = await Passkey.unlock();
-          else throw e;
-        }
-      } else {
-        wif = await Passkey.unlock();
-      }
-      adoptWif(wif);
-      show(true);
+      if (create) await createAccount();
+      else await signIn();
     } catch (e) {
-      alertLine(friendly(e));
+      if (e.status === 404) {
+        /* A passkey with no account behind it (never bootstrapped) can't be
+           adopted — its public key was only available at creation. Let the
+           next tap mint a fresh one. */
+        Passkey.forget(); storeAddr(null);
+        alertLine('That passkey has no smart account here — tap the button to create a fresh one.');
+      } else alertLine(friendly(e));
     } finally {
       go.disabled = false;
     }
@@ -110,13 +146,14 @@
 
   /* ---------------- wallet view ---------------- */
   async function paint() {
-    const addr = address();
-    if (!addr) return;
-    $('#addr').textContent = addr;
+    if (!ADDRESS) return;
+    $('#addr').textContent = ADDRESS;
     try {
-      const a = await api('/api/account?address=' + encodeURIComponent(addr));
+      const a = await api('/api/account?address=' + encodeURIComponent(ADDRESS)
+        + '&credentialId=' + encodeURIComponent(Passkey.storedId() || ''));
       $('#bal').textContent = Number(a.koin || 0).toLocaleString('en-US', { maximumFractionDigits: 8 });
       $('#mana').textContent = Number(a.mana || 0).toFixed(2);
+      if (a.smart) setStep(a.smart.step, a.smart.error);
     } catch (_) {
       $('#bal').textContent = '—'; $('#mana').textContent = '—';
     }
@@ -124,12 +161,13 @@
   setInterval(() => { if (!$('#view-wallet').hidden) paint(); }, 30000);
 
   $('#addr').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(address() || ''); $('#addr').style.borderColor = 'var(--good)'; }
-    catch (_) { window.prompt('Copy your address:', address() || ''); }
+    try { await navigator.clipboard.writeText(ADDRESS || ''); $('#addr').style.borderColor = 'var(--good)'; }
+    catch (_) { window.prompt('Copy your address:', ADDRESS || ''); }
     setTimeout(() => { $('#addr').style.borderColor = ''; }, 900);
   });
 
-  /* Send — the mana-shared co-sign round-trip. */
+  /* Send — prepare on the server, sign with the passkey (the challenge IS
+     the transaction id), the chain verifies the assertion itself. */
   $('#btn-send').addEventListener('click', async () => {
     const btn = $('#btn-send'), st = $('#send-status');
     const to = $('#send-to').value.trim();
@@ -140,45 +178,41 @@
     btn.disabled = true;
     try {
       say('Preparing the exact transaction — the sharer pays the mana…');
-      const p = await proof('transfer');
-      const prep = await api('/api/prepare', { ...p, to, amount });
-      say('Signing with your key — locally…');
-      const signed = prep.demo ? { id: 'demo' } : await signer.signTransaction(prep.tx);
-      say('Broadcasting…');
-      const r = await api('/api/submit', { ref: prep.ref, transaction: signed });
+      const prep = await api('/api/prepare', { address: ADDRESS, to, amount });
+      say('Confirm with your passkey — it signs the transaction id itself…');
+      const a = await Passkey.assert(WebauthnWire.challengeForTxId(prep.tx.id), [Passkey.storedId()]);
+      const blob = WebauthnWire.packSignatureBlob(a);
+      say('Broadcasting — the chain verifies your passkey on-chain…');
+      const r = await api('/api/submit', { ref: prep.ref, transaction: { ...prep.tx, signatures: [blob] } });
       say('Sent ✓ ' + (r.explorer
         ? `— <a href="${r.explorer}" target="_blank" rel="noopener">view it on-chain ↗</a>`
         : (r.demo ? `(demo transaction ${r.txid.slice(0, 14)}…)` : '')), 'ok');
       $('#send-to').value = ''; $('#send-amount').value = '';
       paint();
     } catch (e) {
-      say(e.message || 'Send failed', 'err');
+      say(e.name === 'NotAllowedError' ? 'Passkey prompt closed — nothing was sent' : (e.message || 'Send failed'), 'err');
     } finally {
-      btn.disabled = false;
+      btn.disabled = ACTIVE ? false : true;
     }
   });
 
-  /* Export + sign out. */
-  $('#btn-export').addEventListener('click', () => {
-    const box = $('#wif');
-    if (!box.hidden) { box.hidden = true; $('#btn-export').textContent = 'Reveal private key'; return; }
-    if (!confirm('Reveal your private key?\n\nAnyone who sees it controls the wallet. Only do this to import into another wallet app.')) return;
-    let wif = null;
-    try { wif = localStorage.getItem(LS_WIF); } catch (_) {}
-    box.textContent = wif || '—';
-    box.hidden = false;
-    $('#btn-export').textContent = 'Hide private key';
-  });
-
   $('#btn-signout').addEventListener('click', () => {
-    if (!confirm('Sign out?\n\nYour passkey re-creates this wallet with one scan — nothing is lost.')) return;
-    try { localStorage.removeItem(LS_WIF); } catch (_) {}
-    signer = null;
-    $('#wif').hidden = true; $('#btn-export').textContent = 'Reveal private key';
+    if (!confirm('Sign out?\n\nYour passkey re-opens this account with one scan — nothing is lost.')) return;
+    stopPoll();
+    ADDRESS = null; ACTIVE = false;
+    storeAddr(null); Passkey.forget();
+    try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
     show(false);
-    if (Passkey.remembered()) $('#alt-unlock').hidden = true;
+    $('#alt-unlock').hidden = false;
   });
 
-  /* ---------------- go ---------------- */
-  show(!!address());
+  /* ---------------- resume ---------------- */
+  if (storedAddr() && Passkey.remembered()) {
+    ADDRESS = storedAddr();
+    setStep('pending');
+    pollStatus();
+    show(true);
+  } else {
+    show(false);
+  }
 })();

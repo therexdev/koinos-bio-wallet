@@ -1,27 +1,21 @@
 /* ============================================================
-   Passkey wallets — the wallet IS the passkey.
+   Passkeys for Veive smart accounts.
 
-   WebAuthn's PRF extension makes the device's authenticator produce a
-   deterministic 32-byte secret, gated by the device's own unlock (face,
-   fingerprint, or PIN — the OS decides). We turn that secret into the
-   account's secp256k1 key, so ONE SCAN both creates and re-opens the
-   wallet, on every device the passkey syncs to. Non-custodial end to end.
+   The passkey here isn't a key-derivation trick — it IS the account's
+   on-chain authority. Creation captures the credential's P-256 public
+   key (DER SPKI) so the server can register it in the sign module;
+   after that, every transaction is authorized by a WebAuthn assertion
+   whose challenge is the transaction id, verified BY THE CHAIN.
 
-   INTEROP: the derivation salt and (apex-domain) rpId are shared with the
-   other usekoinos.com apps — the same passkey opens the SAME wallet on
-   all of them. Both values are protocol, not preference.
+   The rpId defaults to this page's hostname, which keeps this
+   playground's passkeys fully separate from other usekoinos apps
+   (PASSKEY_RPID on the server overrides).
    ============================================================ */
 'use strict';
 
 const Passkey = (() => {
-  const CRED_KEY = 'bw_passkey_id';
-  /* The usekoinos ecosystem's wallet-derivation salt. CHANGING IT CHANGES
-     EVERY PASSKEY WALLET'S ADDRESS. */
-  const SALT = new TextEncoder().encode('discover-koinos:wallet:v1');
+  const CRED_KEY = 'bw_smart_cred';
 
-  /* The relying-party id passkeys bind to. The server supplies the APEX
-     domain (e.g. usekoinos.com) so one passkey serves every subdomain;
-     unset it falls back to this page's hostname (local dev). */
   let RP_ID = location.hostname;
   const setRpId = (id) => { if (id) RP_ID = String(id); };
 
@@ -40,81 +34,68 @@ const Passkey = (() => {
 
   function storeId(rawId) { try { localStorage.setItem(CRED_KEY, b64u(rawId)); } catch (_) {} }
   function storedId() { try { return localStorage.getItem(CRED_KEY); } catch (_) { return null; } }
+  function forget() { try { localStorage.removeItem(CRED_KEY); } catch (_) {} }
   const remembered = () => !!storedId();
 
-  /* PRF secret → secp256k1 private key: SHA-256 whitening plus a curve-order
-     range check, deterministically iterated on the (astronomically unlikely)
-     miss. Same PRF value → same key, forever. */
-  const CURVE_N = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
-  async function deriveWif(prfBytes) {
-    let bytes = new Uint8Array(prfBytes);
-    for (let i = 0; i < 16; i++) {
-      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-      const hex = Array.from(digest).map(b => b.toString(16).padStart(2, '0')).join('');
-      const k = BigInt('0x' + hex);
-      if (k > 0n && k < CURVE_N) return new Signer({ privateKey: hex }).getPrivateKey('wif', true);
-      bytes = digest;
-    }
-    throw new Error('key derivation failed');
-  }
-
-  const challenge = () => crypto.getRandomValues(new Uint8Array(32));
-  function prfFrom(cred) {
-    const ext = cred.getClientExtensionResults();
-    return (ext && ext.prf && ext.prf.results && ext.prf.results.first) || null;
-  }
-
-  async function assertPrf(allowIds) {
-    const cred = await navigator.credentials.get({
-      publicKey: {
-        challenge: challenge(),
-        rpId: RP_ID,
-        userVerification: 'required',
-        allowCredentials: (allowIds || []).map(id => ({ type: 'public-key', id: fromB64u(id) })),
-        extensions: { prf: { eval: { first: SALT } } },
-      },
-    });
-    const prf = prfFrom(cred);
-    if (!prf) throw new Error('This passkey can’t derive a wallet key (no PRF support on this device)');
-    storeId(cred.rawId);
-    return prf;
-  }
-
-  /** Create the passkey AND the wallet inside it. */
-  async function create() {
+  /** Create the credential that will OWN the smart account. ES256 only —
+      it's the one algorithm the chain's P-256 verifier speaks. */
+  async function createCredential() {
     const existing = storedId();
     const cred = await navigator.credentials.create({
       publicKey: {
         rp: { name: 'Koinos Bio Wallet', id: RP_ID },
         user: {
           id: crypto.getRandomValues(new Uint8Array(16)),
-          name: 'Koinos Wallet',
-          displayName: 'Koinos Wallet',
+          name: 'Koinos Smart Account',
+          displayName: 'Koinos Smart Account',
         },
-        challenge: challenge(),
-        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
         authenticatorSelection: {
           authenticatorAttachment: 'platform',
           residentKey: 'required',
           userVerification: 'required',
         },
         excludeCredentials: existing ? [{ type: 'public-key', id: fromB64u(existing) }] : [],
-        extensions: { prf: { eval: { first: SALT } } },
+      },
+    });
+    const resp = cred.response;
+    if (typeof resp.getPublicKey !== 'function') {
+      throw new Error('This browser is too old to export the passkey’s public key — try a current one');
+    }
+    const spki = resp.getPublicKey();
+    if (!spki) throw new Error('The authenticator did not hand over a public key');
+    storeId(cred.rawId);
+    return { credentialId: b64u(cred.rawId), publicKey: b64u(spki) };
+  }
+
+  /** A WebAuthn assertion over the given challenge bytes. Empty allow-list
+      opens the platform's picker (synced passkeys included). */
+  async function assert(challengeBytes, allowIds) {
+    const cred = await navigator.credentials.get({
+      publicKey: {
+        challenge: challengeBytes,
+        rpId: RP_ID,
+        userVerification: 'required',
+        allowCredentials: (allowIds || []).map((id) => ({ type: 'public-key', id: fromB64u(id) })),
       },
     });
     storeId(cred.rawId);
-    let prf = prfFrom(cred);
-    if (!prf) prf = await assertPrf([b64u(cred.rawId)]);   // some platforms eval PRF only on get()
-    return deriveWif(prf);
+    return {
+      credentialId: b64u(cred.rawId),
+      signature: new Uint8Array(cred.response.signature),
+      authenticatorData: new Uint8Array(cred.response.authenticatorData),
+      clientDataJSON: new Uint8Array(cred.response.clientDataJSON),
+    };
   }
 
-  /** Unlock: the same scan re-derives the same key. Empty allow-list opens
-      the platform's picker (synced passkeys included). */
-  async function unlock() {
+  /** Sign-in gesture: any assertion identifies the credential (reads are
+      public; real authority is checked per-transaction by the chain). */
+  async function identify() {
     const id = storedId();
-    const prf = await assertPrf(id ? [id] : []);
-    return deriveWif(prf);
+    const a = await assert(crypto.getRandomValues(new Uint8Array(32)), id ? [id] : []);
+    return a.credentialId;
   }
 
-  return { supported, platformReady, remembered, setRpId, create, unlock };
+  return { supported, platformReady, remembered, storedId, forget, setRpId, createCredential, assert, identify };
 })();

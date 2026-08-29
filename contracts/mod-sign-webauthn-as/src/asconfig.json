@@ -1,0 +1,26 @@
+{
+  "targets": {
+    "debug": {
+      "outFile": "../build/debug/ModSignWebauthn.wasm",
+      "textFile": "../build/debug/ModSignWebauthn.wat",
+      "sourceMap": true,
+      "debug": true
+    },
+    "release": {
+      "outFile": "../build/release/ModSignWebauthn.wasm",
+      "textFile": "../build/release/ModSignWebauthn.wat",
+      "sourceMap": true,
+      "optimizeLevel": 3,
+      "shrinkLevel": 0,
+      "converge": false,
+      "noAssert": false
+    }
+  },
+  "options": {
+    "exportStart": "_start",
+    "disable": ["sign-extension", "bulk-memory"],
+    "disableWarning": "235",
+    "lib": [],
+    "use": ["abort="]
+  }
+}

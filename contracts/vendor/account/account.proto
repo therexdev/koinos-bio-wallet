@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package account;
+
+import "koinos/options.proto";
+
+message mod {
+    
+}
+
+message call_operation {
+    bytes contract_id = 1 [(koinos.btype) = ADDRESS];
+    uint32 entry_point = 2;
+    bytes args = 3;
+}
+
+message execute_args {
+    call_operation operation = 1;
+}
+
+message execute_executor_args {
+    call_operation operation = 1;
+}
+
+message execute_user_args {
+    call_operation operation = 1;
+}
+
+message install_module_args {
+    uint32 module_type_id = 1;
+    bytes contract_id = 2 [(koinos.btype) = ADDRESS];
+    repeated bytes scopes = 3;
+    bytes data = 4;
+}
+
+message uninstall_module_args {
+    uint32 module_type_id = 1;
+    bytes contract_id = 2 [(koinos.btype) = ADDRESS];
+    bytes data = 3;
+}
+
+message is_module_installed_args {
+    uint32 module_type_id = 1;
+    bytes contract_id = 2 [(koinos.btype) = ADDRESS];
+    bytes data = 3;
+}
+
+message is_module_installed_result {
+    bool value = 1;
+}
+
+message is_module_type_supported_args {
+    uint32 module_type_id = 1;
+}
+
+message is_module_type_supported_result {
+    bool value = 1;
+}
+
+message get_modules_result {
+    repeated bytes value = 1 [(koinos.btype) = ADDRESS];
+}
+
+message is_valid_signature_args {
+    bytes sender = 1 [(koinos.btype) = ADDRESS];
+    bytes signature = 2;
+    bytes tx_id = 3 [(koinos.btype) = HEX];
+}
+
+message is_valid_signature_result {
+    bool value = 1;
+}
+
+message is_valid_operation_args {
+    call_operation operation = 1;
+}
+
+message is_valid_operation_result {
+    bool value = 1;
+}
+
+message init_account_args {
+    bytes data = 1;
+}
+
+message module_validation {
+    bytes value = 1 [(koinos.btype) = ADDRESS];
+}
+
+message modules_hooks {
+    repeated bytes value = 1 [(koinos.btype) = ADDRESS];
+}
+
+message modules_execution {
+    repeated bytes value = 1 [(koinos.btype) = ADDRESS];
+}
+
+message module_sign {
+    repeated bytes value = 1 [(koinos.btype) = ADDRESS];
+}
+
+message manifest {
+  string version = 1;
+  repeated uint32 supported_modules = 2;
+}

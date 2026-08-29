@@ -1,72 +1,120 @@
-# Koinos Bio Wallet
+# Koinos Bio Wallet — Veive smart accounts
 
-**Your wallet is your fingerprint.** One button — *Create Account or Sign In* —
-one biometric scan (face, fingerprint, or device PIN; the OS decides), and a
-real Koinos account exists. The same scan opens it again, on every device the
-passkey syncs to. No password, no seed phrase, no fees, and **no server ever
-sees a key**.
+**Your wallet is your fingerprint — on-chain.** One button, one biometric scan
+(face, fingerprint, or device PIN; the OS decides), and a **real smart
+account** exists on Koinos: an on-chain contract, built from the
+[Veive protocol](https://github.com/veive-io)'s audited contracts, whose only
+registered authority is your passkey. Every transaction is authorized by a
+WebAuthn assertion that **the blockchain itself verifies** (P-256, on-chain) —
+there is no private key to steal, phish, or back up, anywhere, ever.
 
-Live at **https://wallet.usekoinos.com**.
+Live at **https://wallet.usekoinos.com**. This app is a deliberately separate
+playground for the smart-account concept — its own sponsor, its own passkeys,
+its own contracts — so it can grow without touching the other usekoinos apps.
 
-## How the wallet works
+## How an account is born
 
 ```
 tap the button
-   └─ WebAuthn ceremony (the OS biometric sheet)
-        └─ the passkey's PRF extension emits a deterministic 32-byte secret
-             └─ SHA-256 + curve-order check → secp256k1 private key
-                  └─ Koinos address  (holding a key IS the account — nothing on-chain needed)
+   └─ WebAuthn create ceremony → a passkey with a P-256 keypair in secure hardware
+        └─ the server bootstraps, mana-sponsored (two atomic transactions):
+             tx1  upload Veive's Account contract to a fresh address,
+                  all three authorize overrides on
+             tx2  install mod-sign-webauthn (type 3)
+                  register YOUR passkey's public key as the account's credential
+                  install mod-validation-signature (type 1) with scopes
+                  contract_call + contract_upload + transaction_application
+                       └─ from this instant, only your passkey moves the account
 ```
 
-- **Deterministic**: same passkey + same salt → same key, forever. Creation and
-  sign-in are literally the same gesture.
-- **Synced**: passkeys ride iCloud Keychain / Google Password Manager, so the
-  wallet appears on the user's other devices with a scan.
-- **Non-custodial**: the key is derived in the page and cached in the browser's
-  localStorage between visits; the passkey re-derives it at any time. Export
-  (WIF) is on the wallet screen.
+The bootstrap is driven by a throwaway secp256k1 key that names the address;
+once the validator module is live that key is powerless (the account routes
+every authority check into passkey-signature validation). The server keeps it
+only to heal interrupted bootstraps.
 
-### Two protocol constants (never change them)
+## How a send works
 
-| constant | value | why |
-|---|---|---|
-| derivation salt | `discover-koinos:wallet:v1` | shared across the usekoinos ecosystem — changing it changes every wallet's address |
-| `PASSKEY_RPID` | `usekoinos.com` (the APEX domain) | passkeys bound to the apex work on **every** `*.usekoinos.com` app — one passkey, one wallet, everywhere |
+```
+server prepares the exact transaction   (payer = sponsor, payee = you)
+   └─ your passkey signs — the WebAuthn challenge IS the transaction id
+        └─ the browser packs the assertion into the Veive signature format
+             (0xFF02 ‖ protobuf authentication_data, see contracts/README.md)
+             └─ the sponsor co-signs as mana payer and broadcasts
+                  └─ ON-CHAIN: account → validator → sign module → P-256
+                     verifier check the assertion against your registered
+                     credential and the transaction id. The server never
+                     could have forged it.
+```
 
-Because both are shared with [Discover Koinos](https://usekoinos.com), a
-passkey created there opens the same wallet here, and vice versa.
+The signature packing is proven **byte-identical** to the reference vector
+from Veive's own module test suite (`node tests/wire-format.test.js`), and our
+packer fixes an upstream client bug: every DER signature is normalized so the
+on-chain ASN.1 reader parses it correctly (~1 in 128 raw assertions would
+otherwise fail).
 
-## The mana sharer
+## The contracts
 
-This app runs its **own** sponsor wallet (separate from any other app's).
-Every transfer a visitor sends is built as `payer = sponsor, payee = visitor`:
-the sponsor's regenerating mana covers the cost, the visitor's balance is
-never touched by fees, and the visitor's own signature still authorizes every
-operation. The server verifies the signed transaction is byte-identical to the
-one it prepared before co-signing — a tampered transaction simply doesn't match.
+See [contracts/README.md](contracts/README.md) for the full story. Short
+version: three shared contracts are deployed once (Veive's P-256 verifier and
+validation module as published; the WebAuthn sign module rebuilt from source
+solely to point at our verifier — the rebuild is byte-identical to their npm
+binary when built with their address), plus one 97KB Account contract per
+user, uploaded at signup.
 
-**No new contracts are needed for v1.** Passkey wallets are plain key accounts;
-the Veive phase (below) is where on-chain contracts enter.
+## Honest mana economics
+
+| action | burns (≈) |
+|---|---|
+| shared infrastructure (once) | 160 mana |
+| **each new account** | **85 mana** (the 97KB contract upload + module setup) |
+| each passkey-verified transfer | 1–10 mana (on-chain P-256 costs more than a plain transfer) |
+
+Mana regenerates ~20%/day of KOIN held. A sponsor holding **200 KOIN** can
+mint 2 accounts immediately and roughly one more every two days sustained —
+fine for a playground; scale the sponsor with adoption. Guardrails:
+`MAX_ACCOUNTS_PER_DAY` per IP (default 3), `MAX_ACCOUNTS_PER_DAY_GLOBAL`
+(default 20), `MIN_CREATE_MANA` floor (default 120), per-address/IP transfer
+budgets, and a sponsor mana floor for sends.
 
 ## Run it
 
 ```bash
 npm install
 npm start            # http://localhost:3000 — DEMO mode until configured
+npm test             # wire-format proof against Veive's reference vector
 ```
 
-### Go live
+Demo mode is fully interactive: the passkey ceremonies and signature packing
+are real (the server verifies every packed signature exactly like the live
+path); only the chain is simulated.
+
+### Go live (once)
 
 ```bash
-# 1. Make (or adopt) the sponsor key — writes wallet.env, chmod 600
-node tools/keygen.js                     # fresh key
-SPONSOR_WIF=<wif> node tools/keygen.js   # or keep an existing wallet
+# 1. Sponsor (mana sharer) — writes wallet.env, chmod 600
+node tools/keygen.js                     # or SPONSOR_WIF=<wif> node tools/keygen.js
+#    …fund the printed address: 150–200 KOIN recommended (see economics above)
 
-# 2. Fund the printed SPONSOR address with 20–50 KOIN (mainnet).
-#    Transfers burn ~0.3–1 mana each; mana recharges ~20%/day.
+# 2. Infrastructure keys — writes wallet-infra.env, chmod 600
+node tools/infra-keygen.js
 
-# 3. Serve it
-KOINOS_NETWORK=mainnet SPONSOR_WIF=... PASSKEY_RPID=usekoinos.com node server.js
+# 3. Build the sign module + deploy the three shared contracts (~160 mana)
+cd contracts/mod-sign-webauthn-as && npm install && cd ../..
+KOINOS_NETWORK=mainnet node tools/infra-deploy.js
+#    …verifies itself: reads module manifests back and has the DEPLOYED
+#    verifier verify a real WebAuthn assertion before declaring success.
+#    Prints the three *_ADDR values for the server environment.
+```
+
+### Serve
+
+```bash
+KOINOS_NETWORK=mainnet \
+SPONSOR_WIF=…            # from wallet.env
+VERIFIER_ADDR=…          # the three addresses infra-deploy printed
+MOD_SIGN_WEBAUTHN_ADDR=… \
+MOD_VALIDATION_SIGNATURE_ADDR=… \
+node server.js
 ```
 
 ### Environment variables
@@ -76,47 +124,59 @@ KOINOS_NETWORK=mainnet SPONSOR_WIF=... PASSKEY_RPID=usekoinos.com node server.js
 | `PORT` | `3000` | listen port |
 | `KOINOS_NETWORK` | `harbinger` | `harbinger` or `mainnet` |
 | `KOINOS_RPC` | *(probe list)* | own RPC endpoint(s), comma-separated by priority |
-| `SPONSOR_WIF` | — | **the mana sharer.** The app's only secret |
-| `PASSKEY_RPID` | *(page hostname)* | WebAuthn relying-party id — set the APEX domain (`usekoinos.com`) in production |
+| `SPONSOR_WIF` | — | the mana sharer — pays for bootstraps and transfers |
+| `VERIFIER_ADDR` | — | deployed P-256 verifier (infra-deploy) |
+| `MOD_SIGN_WEBAUTHN_ADDR` | — | deployed WebAuthn sign module (infra-deploy) |
+| `MOD_VALIDATION_SIGNATURE_ADDR` | — | deployed signature validator (infra-deploy) |
+| `PASSKEY_RPID` | *(page hostname)* | WebAuthn relying-party id. Leave unset on wallet.usekoinos.com — this playground's passkeys stay separate from other usekoinos apps by design |
+| `DATA_DIR` | `./data` | account store location (set a persistent path on Hostinger) |
 | `TRUST_PROXY_HOPS` | `0` | proxy hops in front (Hostinger = 1) for real client IPs |
+| `MAX_ACCOUNTS_PER_DAY` | `3` | account creations per IP per day |
+| `MAX_ACCOUNTS_PER_DAY_GLOBAL` | `20` | account creations per day, total |
+| `MIN_CREATE_MANA` | `120` | refuse signups when sponsor mana is below this |
 | `MAX_TRANSFERS_PER_DAY` | `30` | per-address daily transfer budget (per-IP is 2×) |
-| `MIN_SPONSOR_MANA` | `5` | refuse transfers when the sponsor is below this mana |
+| `MIN_SPONSOR_MANA` | `5` | refuse transfers when sponsor mana is below this |
 | `DEMO_MODE` | — | `1` forces demo mode |
 
-Without `SPONSOR_WIF` (or with the chain unreachable) the app boots in **demo
-mode**: the passkey flow is fully real, transfers simulate.
+Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
+why on `/api/config`.
 
 ### Deploy at wallet.usekoinos.com (Hostinger)
 
 1. DNS: add `wallet` as a record on `usekoinos.com` pointing at the hosting.
 2. Create a Node.js app from this repo (start command `node server.js`).
-3. Set the env vars above — `PASSKEY_RPID=usekoinos.com`, `TRUST_PROXY_HOPS=1`,
-   `KOINOS_NETWORK=mainnet`, `SPONSOR_WIF` from `wallet.env`.
-4. Visit `/api/config` — expect `"network":"mainnet"`, `"demo":false`,
-   `"rpId":"usekoinos.com"`.
+3. Run the go-live steps above **on your own machine** (the secrets never
+   need to touch the host), then set the env vars — including `DATA_DIR`
+   to a path that survives redeploys, and `TRUST_PROXY_HOPS=1`.
+4. Visit `/api/config` — expect `"demo":false` and the three module
+   addresses under `"modules"`.
 
 WebAuthn requires HTTPS (any real domain qualifies; `localhost` works for dev).
 
 ## Security model
 
-- The visitor's key: born in the authenticator, derived in the page, never
-  transmitted. localStorage holds it between visits purely as a convenience —
-  wiping it costs nothing, the passkey re-derives it.
-- The server holds one secret (`SPONSOR_WIF`), keeps no user records, and
-  co-signs only transactions it built itself (id + recomputed header +
-  recovered visitor signature all verified).
-- Send-path hardening (learned on mainnet): node-side "request timeout"
-  replies are treated as ambiguous and the mined-poll decides; RPC failover
-  across multiple endpoints; error bodies unwrapped to human text.
-- Per-address and per-IP daily budgets plus a sponsor mana floor keep one hot
-  day from draining the sharer.
+- **Your authority**: a P-256 keypair inside your device's secure hardware,
+  registered on-chain as the account's credential. Assertions are verified by
+  the chain; the server's checks are merely a courtesy pre-flight.
+- **The server holds**: the sponsor key, and each account's bootstrap key
+  (`data/accounts.json`, mode 600) — powerless after bootstrap, kept to heal
+  interrupted signups. It cannot move an active account: with the validator
+  installed, the chain accepts only passkey-signed transactions.
+- **Recovery**: your passkey syncs via iCloud Keychain / Google Password
+  Manager; any synced device opens the account. A lost passkey is currently a
+  lost account (module-based recovery is the natural next Veive step) — say
+  so honestly to users before real value goes in.
+- **Send-path hardening** (learned on mainnet): ambiguous node replies are
+  arbitrated by a mined-poll; RPC failover; error bodies unwrapped; and the
+  sponsor's signature is ordered BEFORE the WebAuthn blob — the chain's payer
+  check walks signatures in order and must match the sponsor before touching
+  the non-secp entry.
 
-## Roadmap: Veive
+## What happened to v1 (PRF wallets)?
 
-The plan is to grow this into a [Veive](https://docs.veive.io) smart-account
-wallet — on-chain recovery, session policies, key rotation, module-based
-signature validation (their `mod-sign-webauthn-as` verifies WebAuthn
-assertions on-chain). The current PRF wallet is forward-compatible: a Veive
-account can be added alongside and assets moved with one sponsored transfer.
-Until Veive's account contract + factory + docs mature, per-user smart-account
-deployment costs and integration surface don't fit a free wallet.
+v1 derived a secp256k1 key from the passkey's PRF extension. This rework
+replaces it with the real thing — accounts as contracts, per the Veive
+concept. If you made a v1 wallet: the same passkey still opens that same
+PRF wallet on [usekoinos.com](https://usekoinos.com) (shared salt + apex
+rpId), or import the WIF you exported. This app's passkeys are now scoped to
+its own hostname and its accounts live on-chain.

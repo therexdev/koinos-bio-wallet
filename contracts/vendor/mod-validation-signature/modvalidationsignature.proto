@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package modvalidationsignature;
+
+import "koinos/options.proto";
+
+message threshold {
+   uint32 value = 1;
+}
+
+message set_threshold_args {
+   bytes user = 1 [(koinos.btype) = ADDRESS];
+   uint32 value = 2;
+}
+
+message get_threshold_args {
+   bytes user = 1 [(koinos.btype) = ADDRESS];
+   uint32 value = 2;
+}
+
+message get_threshold_result {
+   uint32 value = 1;
+}
+

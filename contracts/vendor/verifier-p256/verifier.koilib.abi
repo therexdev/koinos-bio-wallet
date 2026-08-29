@@ -1,0 +1,45 @@
+{
+    "methods": {
+        "verify": {
+            "argument": "template.verify_arguments",
+            "return": "template.verify_result",
+            "entry-point": "0xa12dd3a7",
+            "entry_point": 2704135079,
+            "description": "Verify p256 signature",
+            "read-only": false,
+            "read_only": false
+        }
+    },
+    "koilib_types": {
+        "nested": {
+            "template": {
+                "nested": {
+                    "verify_arguments": {
+                        "fields": {
+                            "signature": {
+                                "type": "bytes",
+                                "id": 1
+                            },
+                            "publicKey": {
+                                "type": "bytes",
+                                "id": 2
+                            },
+                            "msg": {
+                                "type": "bytes",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "verify_result": {
+                        "fields": {
+                            "value": {
+                                "type": "uint32",
+                                "id": 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
