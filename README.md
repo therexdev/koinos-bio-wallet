@@ -129,7 +129,7 @@ node server.js
 | `MOD_SIGN_WEBAUTHN_ADDR` | — | deployed WebAuthn sign module (infra-deploy) |
 | `MOD_VALIDATION_SIGNATURE_ADDR` | — | deployed signature validator (infra-deploy) |
 | `PASSKEY_RPID` | *(page hostname)* | WebAuthn relying-party id. Leave unset on wallet.usekoinos.com — this playground's passkeys stay separate from other usekoinos apps by design |
-| `DATA_DIR` | `./data` | account store location (set a persistent path on Hostinger) |
+| `DATA_DIR` | `./data` | account store location. Set `../bio-wallet-data` on Hostinger — a relative value resolves against the app folder, so that lands just OUTSIDE the checkout and survives redeploys |
 | `TRUST_PROXY_HOPS` | `0` | proxy hops in front (Hostinger = 1) for real client IPs |
 | `MAX_ACCOUNTS_PER_DAY` | `3` | account creations per IP per day |
 | `MAX_ACCOUNTS_PER_DAY_GLOBAL` | `20` | account creations per day, total |
@@ -146,8 +146,9 @@ why on `/api/config`.
 1. DNS: add `wallet` as a record on `usekoinos.com` pointing at the hosting.
 2. Create a Node.js app from this repo (start command `node server.js`).
 3. Run the go-live steps above **on your own machine** (the secrets never
-   need to touch the host), then set the env vars — including `DATA_DIR`
-   to a path that survives redeploys, and `TRUST_PROXY_HOPS=1`.
+   need to touch the host), then set the env vars — including
+   `DATA_DIR=../bio-wallet-data` (survives redeploys; created automatically)
+   and `TRUST_PROXY_HOPS=1`.
 4. Visit `/api/config` — expect `"demo":false` and the three module
    addresses under `"modules"`.
 

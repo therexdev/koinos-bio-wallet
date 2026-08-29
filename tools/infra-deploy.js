@@ -48,6 +48,16 @@ function die(msg) { console.error('\n✗ ' + msg); process.exit(1); }
 
 (async () => {
   const network = process.env.KOINOS_NETWORK || 'harbinger';
+  if (network !== 'mainnet') {
+    console.log('╔══════════════════════════════════════════════════════════════╗');
+    console.log(`║  network: ${network} — a TESTNET. Contracts deployed here      `);
+    console.log('║  DO NOT exist on mainnet. For the real chain, run:           ║');
+    console.log('║    PowerShell:  $env:KOINOS_NETWORK = \'mainnet\'              ║');
+    console.log('║    then:        node tools/infra-deploy.js                   ║');
+    console.log('╚══════════════════════════════════════════════════════════════╝');
+  } else {
+    console.log('network: mainnet');
+  }
   const walletEnv = readEnvFile('wallet.env');
   const infra = readEnvFile('wallet-infra.env');
   const sponsorWif = process.env.SPONSOR_WIF || walletEnv.SPONSOR_WIF;

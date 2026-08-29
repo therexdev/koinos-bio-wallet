@@ -46,7 +46,11 @@ const CFG = {
      playground. (Set the apex domain only when you want passkeys shared
      across *.usekoinos.com.) */
   passkeyRpId: (process.env.PASSKEY_RPID || '').trim(),
-  dataDir: process.env.DATA_DIR || path.join(__dirname, 'data'),
+  /* Where accounts.json lives. A RELATIVE value resolves against the app
+     folder itself (not the process cwd), so DATA_DIR=../bio-wallet-data
+     always means "a sibling of this checkout" — outside the folder that a
+     git redeploy replaces — on any host. */
+  dataDir: process.env.DATA_DIR ? path.resolve(__dirname, process.env.DATA_DIR) : path.join(__dirname, 'data'),
   trustProxyHops: parseInt(process.env.TRUST_PROXY_HOPS || '0', 10),
   minSponsorMana: Number(process.env.MIN_SPONSOR_MANA || 5),
   /* Account creation burns ~85 mana (a 97KB contract upload + module

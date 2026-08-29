@@ -56,7 +56,8 @@
     "ts-jest": "^29.2.2",
     "ts-node": "^10.4.0",
     "typescript": "^4.9.5",
-    "yaml": "^2.1.3"
+    "yaml": "^2.1.3",
+    "yarn": "^1.22.22"
   },
   "scripts": {
     "asbuild": "asc build/index.ts --config src/asconfig.json --use abort= --target release",
