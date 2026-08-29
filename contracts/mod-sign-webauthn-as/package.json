@@ -62,7 +62,7 @@
   "scripts": {
     "asbuild": "asc build/index.ts --config src/asconfig.json --use abort= --target release",
     "precompile": "koinos-precompiler-as src",
-    "build": "node set-verifier.js && npm run precompile && npm run asbuild",
+    "build": "node set-verifier.js && node patch-precompiler.js && npm run precompile && npm run asbuild",
     "deploy": "ts-node scripts/deploy.ts",
     "dist": "ts-node scripts/dist.ts",
     "keys": "node generateKeys.js",
