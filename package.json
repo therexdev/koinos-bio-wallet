@@ -1,0 +1,15 @@
+{
+  "name": "koinos-bio-wallet",
+  "version": "0.1.0",
+  "description": "Your Koinos wallet, sealed by your own biometrics — one passkey scan creates it, the same scan opens it. Feeless via its own mana sharer.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "keygen": "node tools/keygen.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "koilib": "^9.0.0"
+  },
+  "license": "MIT"
+}

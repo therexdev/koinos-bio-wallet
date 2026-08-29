@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Koinos Bio Wallet</title>
+<meta name="description" content="Your Koinos wallet, sealed by your own biometrics. One scan creates it, the same scan opens it — no password, no seed phrase, no fees.">
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/wallet.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="mark">🔐</span> Koinos <strong>Bio Wallet</strong></div>
+  <div class="top-right">
+    <span class="badge" id="net-badge">…</span>
+    <button class="linkish" id="btn-signout" hidden>Sign out</button>
+  </div>
+</header>
+
+<main>
+  <!-- ─── Landing: one button ─── -->
+  <section id="view-landing" class="landing">
+    <div class="emblem" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="54" height="54" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M12 3a7 7 0 0 1 7 7v2c0 2.5-.6 4.9-1.7 7"/>
+        <path d="M12 3a7 7 0 0 0-7 7v1"/>
+        <path d="M12 7a3.5 3.5 0 0 1 3.5 3.5V12c0 2.8-.7 5.4-2 7.7"/>
+        <path d="M12 7a3.5 3.5 0 0 0-3.5 3.5v2A11 11 0 0 1 7 18"/>
+        <path d="M12 10.5V12a15 15 0 0 1-1.5 6.5"/>
+      </svg>
+    </div>
+    <h1>Your wallet is<br><em>your fingerprint</em></h1>
+    <p class="lead">A real Koinos account, sealed by your own biometrics. One scan creates it —
+      the same scan opens it, on every device your passkeys sync to. No password, no seed
+      phrase, no fees, and no server ever sees your key.</p>
+    <button class="cta" id="btn-go">Create Account or Sign In</button>
+    <p class="alt" id="alt-unlock" hidden>Made your wallet on another device?
+      <a href="#" id="btn-unlock-existing">Open it with a synced passkey</a></p>
+    <p class="unsupported" id="no-passkey" hidden>This browser has no biometric passkey support —
+      try a phone, or a browser with Face ID / fingerprint / Windows Hello.</p>
+    <p class="note" id="demo-note" hidden>Demo mode — no chain connected yet; actions simulate.</p>
+  </section>
+
+  <!-- ─── Wallet ─── -->
+  <section id="view-wallet" class="wallet" hidden>
+    <div class="card addr-card">
+      <div class="k">Your Koinos address</div>
+      <button class="addr" id="addr" title="Copy address"></button>
+      <div class="hint">Tap to copy. This address is yours on every Koinos app.</div>
+    </div>
+
+    <div class="row">
+      <div class="card stat">
+        <div class="k"><span id="sym">KOIN</span> balance</div>
+        <div class="v" id="bal">…</div>
+      </div>
+      <div class="card stat">
+        <div class="k">Mana</div>
+        <div class="v" id="mana">…</div>
+        <div class="hint">Fees are on us — the sharer pays.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="k">Send <span id="sym2">KOIN</span> <span class="free-chip">free — mana shared</span></div>
+      <label>To address<input type="text" id="send-to" placeholder="1…" autocomplete="off" spellcheck="false"></label>
+      <label>Amount<input type="text" id="send-amount" inputmode="decimal" placeholder="1.0" autocomplete="off"></label>
+      <div class="status" id="send-status" hidden></div>
+      <button class="cta small" id="btn-send">Send</button>
+    </div>
+
+    <div class="card">
+      <div class="k">Backup</div>
+      <p class="hint" style="margin:6px 0 10px">Your passkey re-creates this wallet with a scan — the key below is a
+        belt-and-braces export for other wallets (Kondor etc.). Never share it.</p>
+      <button class="ghost" id="btn-export">Reveal private key</button>
+      <div class="wif" id="wif" hidden></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>Powered by <a href="https://koinos.io" target="_blank" rel="noopener">Koinos</a> — feeless by design</span>
+  <a href="https://usekoinos.com" target="_blank" rel="noopener">Discover Koinos ↗</a>
+</footer>
+
+<script src="/js/vendor/koinos.min.js"></script>
+<script src="/js/passkey.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
