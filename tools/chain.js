@@ -372,6 +372,48 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
   });
 }
 
+/** Setup transaction for an account that cannot yet authorize anything.
+
+    Uploading Account.wasm with all three authorize overrides routes EVERY
+    authority check into the account's authorize() — which, with no modules
+    installed, cannot approve its own setup. Veive's own e2e sidesteps this
+    by making the account the transaction's PAYER (one check, which an
+    unconfigured account grants); we can't, because a new account has no
+    mana. So the sponsor is payer AND payee here: the account is neither, so
+    the chain never asks it to authorize the transaction at all — only the
+    contract_call authority inside, which an unconfigured account grants
+    ("[account] no validation found, skip"). The account key co-signs too,
+    so any signature-based check inside also passes.
+
+    This ordering is load-bearing: the ops install the sign module and
+    register the credential BEFORE the validator, so every op runs while the
+    account still grants contract_call. Once the validator lands, the
+    passkey governs — including this very path. */
+async function sendAsSponsorFor(key, ops, { rcLimit = K.rcLimit } = {}) {
+  key.provider = provider();
+  return queueTx(async () => {
+    const tx = new Transaction({
+      signer: sponsor(), provider: provider(),
+      options: { payer: sponsorAddress(), rcLimit },
+    });
+    for (const op of ops) await tx.pushOperation(op);
+    await tx.prepare();
+    await tx.sign();                            // sponsor first: the payer check stops here
+    await key.signTransaction(tx.transaction);  // the account key, as a belt-and-braces second
+    const send = new Transaction({ provider: provider() });
+    send.transaction = tx.transaction;
+    await sendTolerant(send);
+    try { await waitMined(tx.transaction.id); }
+    catch (e) {
+      const err = new Error(`transaction ${tx.transaction.id} not confirmed: ${humanChainError(e)}`);
+      err.txId = tx.transaction.id;
+      err.broadcast = true;
+      throw err;
+    }
+    return tx.transaction.id;
+  });
+}
+
 const MISSING_CONTRACT = /not exist|not found|unable to find|invalid contract|no contract/i;
 /* mod-sign-webauthn declares get_credentials read-only, but it lazily
    assigns the caller's storage space and therefore WRITES the first time it
@@ -470,7 +512,7 @@ async function bootstrapSmartAccount(key, credential) {
   let setupTx = null, lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, 4000 + attempt * 2000));
-    try { setupTx = await sendAsAccount(key, ops); lastErr = null; break; }
+    try { setupTx = await sendAsSponsorFor(key, ops, { rcLimit: K.rcLimitSmart }); lastErr = null; break; }
     catch (e) {
       lastErr = e;
       if (e.broadcast) { // timed out but may have mined — the chain decides
@@ -572,7 +614,7 @@ module.exports = {
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,
   accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,
-  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount,
+  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor,
   opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
   modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,
 };
