@@ -11,12 +11,15 @@
      USDC/USDT deposits always take Route C's tail (USDC adds one deep
      stable-pair hop).
 
-   The server drives the Ethereum legs with the transit key. The KOINOS
-   legs (bridge redeem; Route B's KoinDX swap) mint/spend on the SMART
-   ACCOUNT, so they pause at `awaiting_redeem` / `awaiting_swap` until the
-   PASSKEY signs the prepared transaction — the chain, not this server,
-   authorizes the landing. Custody is therefore transit-only: funds are
-   server-held exactly while they cross, and land under passkey authority.
+   The server drives the Ethereum legs with the transit key, then tries to
+   complete the bridge redeem itself: the recipient is fixed inside the
+   guardian-signed record, so that transaction can only ever deliver to the
+   user's own account — the sponsor merely pays for it. If the chain says it
+   wants the recipient's signature anyway, the job falls back to a passkey
+   tap; we don't guess which, the chain answers. Route B's final KoinDX swap
+   always needs the passkey: it SPENDS vETH from the account. Custody is
+   transit-only — funds are server-held exactly while they cross, and land on
+   an account only the passkey can spend from.
 
    Jobs persist after every transition (crash/restart resumes from
    on-chain reality), amounts are read from actual balances (never
@@ -67,8 +70,24 @@ const ETH_STATES = new Set([
   "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge",
   "bridge_token", "deposit_eth",
 ]);
-/* States that wait on the user's passkey. */
-const TAP_STATES = new Set(["awaiting_redeem", "awaiting_swap"]);
+/* Does this job need the user's passkey right now?
+
+   Route B's KoinDX swap always does: it SPENDS vETH from the account, so
+   the account must authorize it.
+
+   The bridge redeem is the interesting one. It only MINTS to the recipient
+   named in the guardian-signed record, and the bridge carries relayer and
+   payment fields precisely so a third party can submit it — which reads
+   like nobody's authority but the guardians' is involved. We do not get to
+   assume that: whether the deployed contract also demands the recipient's
+   authority is a fact about a contract we cannot read from here. So the
+   sponsor TRIES first, and if the chain answers "not authorized" the job
+   sets `needsTap` and the passkey finishes it (see autoRedeem). Correct
+   either way, and the chain — not a guess — decides which. */
+function waitsForTap(j) {
+  return j.status === "awaiting_swap"
+    || (j.status === "awaiting_redeem" && !!j.needsTap);
+}
 
 const file = () => path.join(S.dataDir, "funding.json");
 const BUSY = new Set();
@@ -343,13 +362,14 @@ function reset(account) {
 async function tick() {
   for (const account of Object.keys(S.store.jobs)) {
     const j = job(account);
-    if (!j || TERMINAL.has(j.status) || TAP_STATES.has(j.status)) continue;
+    if (!j || TERMINAL.has(j.status) || waitsForTap(j)) continue;
     if (BUSY.has(account)) continue;
     BUSY.add(account);
     try {
       if (S.demo) await demoAdvance(account, j);
       else if (ETH_STATES.has(j.status)) await advanceEth(account, j);
       else if (j.status === "awaiting_signatures") await pollGuardians(account, j);
+      else if (j.status === "awaiting_redeem") await autoRedeem(account, j);
     } catch (e) {
       const msg = String(e.message || e);
       if (isTransient(msg)) { dropProvider(); }
@@ -510,6 +530,62 @@ async function pollGuardians(account, j) {
   }
 }
 
+/* The bridge already delivered this record (a reply we lost, or a retry). */
+const ALREADY_DONE = /already complet|already redeem|already processed|has been completed|already exists/i;
+/* The chain refused a sponsor-only redeem: the recipient must authorize. */
+const NEEDS_RECIPIENT = /has not authorized|not authorized|authority|unauthorized/i;
+
+/** Try to complete the bridge transfer on the sponsor's own nonce. The
+    recipient is fixed inside the guardian-signed record, so this can only
+    ever deliver to the user's account — nobody, including us, can redirect
+    it. If the chain refuses a sponsor-only redeem, the job switches to the
+    passkey tap and stays there (see waitsForTap). */
+async function autoRedeem(account, j) {
+  const exp = j.record && Number(j.record.expiration);
+  if (exp && exp <= Date.now()) {
+    saveJob(account, { ...j, status: "awaiting_signatures", sigStartedAt: Date.now() });
+    return;
+  }
+  const attempts = (j.redeemAttempts || 0) + 1;
+  const ops = [await opCompleteTransfer({ record: j.record, network: S.network, provider: chain.provider() })];
+  try {
+    const txid = await chain.sendAsSponsorFor(null, ops, { rcLimit: DEFAULT_REDEEM_RC });
+    finishRedeem(account, txid);
+  } catch (e) {
+    const m = chain.humanChainError(e);
+    /* Already delivered on an earlier attempt whose reply we lost. */
+    if (ALREADY_DONE.test(m)) {
+      finishRedeem(account, j.redeemId || "confirmed", "already completed");
+      return;
+    }
+    /* The chain wants the recipient's own authority after all — hand the
+       step to the passkey and leave it there for this job. */
+    if (NEEDS_RECIPIENT.test(m)) {
+      saveJob(account, { ...job(account), needsTap: true, redeemNote: "the bridge asked for your signature" });
+      return;
+    }
+    /* Broadcast but unconfirmed: it may well have landed. Come back and
+       let the bridge's own "already completed" answer settle it. */
+    if (attempts < 15 && (e.broadcast || isTransient(m) || /nonce/i.test(m))) {
+      saveJob(account, { ...job(account), redeemAttempts: attempts });
+      return;
+    }
+    throw e;
+  }
+}
+
+function finishRedeem(account, txid, note) {
+  const j = job(account);
+  if (!j) return;
+  if (j.route === "B") {
+    /* vETH landed on the account — the swap to KOIN spends it, so that
+       step needs the passkey. */
+    saveJob(account, { ...j, status: "awaiting_swap", redeemId: txid, vethSats: String(j.record ? j.record.amount : j.vethSats), redeemNote: note });
+  } else {
+    saveJob(account, { ...j, status: "done", redeemId: txid, koinReceived: String(j.record ? j.record.amount : j.estKoinOut), finishedAt: Date.now(), redeemNote: note });
+  }
+}
+
 /* ---------------- the passkey steps ---------------- */
 
 /** Operations for the step the job is waiting on — the server prepares,
@@ -518,6 +594,9 @@ async function prepareTapOps(account) {
   const j = job(account);
   if (!j) throw new Error("No swap in progress");
   if (j.status === "awaiting_redeem") {
+    /* Normally sponsor-driven (see autoRedeem); only reachable once the
+       chain has told us it wants the recipient's signature. */
+    if (!j.needsTap) throw new Error("Your KOIN is landing on its own — no signature needed");
     if (S.demo) return { step: "redeem", ops: null, rcLimit: DEFAULT_REDEEM_RC };
     /* Guardian signatures live ~60 minutes. If they lapsed while waiting for
        the tap, flip back to polling — that path requests fresh signatures. */
@@ -543,13 +622,12 @@ function onTapDone(account, step, txid) {
   const j = job(account);
   if (!j) return;
   if (step === "redeem") {
-    if (j.route === "B") {
-      /* Redeem minted vETH to the smart account — one more tap swaps it. */
-      saveJob(account, { ...j, status: "awaiting_swap", redeemId: txid, vethSats: String(j.record ? j.record.amount : j.vethSats), taps: (j.taps || 0) + 1 });
-    } else {
-      saveJob(account, { ...j, status: "done", redeemId: txid, koinReceived: String(j.record ? j.record.amount : j.estKoinOut), finishedAt: Date.now(), taps: (j.taps || 0) + 1 });
-    }
-  } else if (step === "koindx") {
+    finishRedeem(account, txid);
+    const done = job(account);
+    if (done) saveJob(account, { ...done, taps: (j.taps || 0) + 1 });
+    return;
+  }
+  if (step === "koindx") {
     saveJob(account, { ...j, status: "done", swapId: txid, koinReceived: j.estKoinOut || j.koinReceived, finishedAt: Date.now(), taps: (j.taps || 0) + 1 });
   }
 }
@@ -610,6 +688,7 @@ function demoStart(account, asset, amt, route) {
 const DEMO_FLOW_C = ["approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 const DEMO_FLOW_B = ["deposit_eth", "awaiting_signatures", "awaiting_redeem"];
 async function demoAdvance(account, j) {
+  if (j.status === "awaiting_redeem") { finishRedeem(account, "0xdemo-redeem"); return; }
   const flow = j.route === "B" ? DEMO_FLOW_B : DEMO_FLOW_C;
   const at = flow.indexOf(j.status);
   if (at < 0) return;
@@ -663,4 +742,6 @@ async function status(account) {
 module.exports = {
   configure, enable, status, start, resume, reset, quoteFor,
   prepareTapOps, onTapDone, transitFor, job, publicJob,
+  /* the driver, exposed so tests can step it without waiting on the timer */
+  tick,
 };

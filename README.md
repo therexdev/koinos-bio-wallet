@@ -91,7 +91,7 @@ retiring lost credentials — not yet surfaced in the UI.)
 ## Fund with ETH · USDC · USDT
 
 Every account can mint a personal **Ethereum deposit address**. Send it ETH,
-USDC or USDT from any wallet or exchange, and one tap swaps the whole balance
+USDC or USDT from any wallet or exchange, pick an amount, and one tap swaps it
 into KOIN on the smart account — through the better of the two routes ported
 from [Koinos Node Desktop](https://github.com/therexdev/Koinos-Node)'s
 Fund-node pipeline (every calldata builder is proven **byte-identical** to
@@ -109,10 +109,17 @@ new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150).
 
 **How custody works here — stated plainly:** the deposit address is a
 *transit* address whose key the server holds (like the bootstrap key). The
-server drives the Ethereum legs; the KOIN **landing** — the Vortex bridge
-redeem, and Route B's KoinDX swap — mints to the smart account and is signed
-by the **passkey**, verified on-chain. So funds are custodial only while in
-transit, and land under passkey authority. Keep transit amounts modest.
+server drives the Ethereum legs, then tries to complete the Vortex bridge
+redeem itself — the recipient is fixed inside the guardian-signed record, so
+that transaction can only ever deliver to the user's own account, and the
+bridge carries a relayer field precisely so a third party can pay for it.
+Nobody, including us, can redirect it, so a tap there would buy no security.
+If the deployed bridge disagrees and demands the recipient's own authority,
+the job says so and the **passkey** finishes it instead — the chain decides,
+not an assumption (`node tests/redeem-fallback.test.js` pins both). Route B's
+final KoinDX swap always needs the passkey: it *spends* vETH from the account.
+Funds are custodial only while in transit, and land on an account only the
+passkey can spend from. Keep transit amounts modest.
 
 Stablecoin-only deposits need a little ETH for Ethereum gas; set
 `ETH_GAS_SPONSOR_KEY` (an Ethereum private key holding some ETH) and the app
@@ -144,7 +151,7 @@ budgets, and a sponsor mana floor for sends.
 ```bash
 npm install
 npm start            # http://localhost:3000 — DEMO mode until configured
-npm test             # wire-format proof against Veive's reference vector
+npm test             # wire format, recovery kit, ETH parity, passkey pre-flight
 ```
 
 Demo mode is fully interactive: the passkey ceremonies and signature packing

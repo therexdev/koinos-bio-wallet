@@ -390,7 +390,7 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
     account still grants contract_call. Once the validator lands, the
     passkey governs — including this very path. */
 async function sendAsSponsorFor(key, ops, { rcLimit = K.rcLimit } = {}) {
-  key.provider = provider();
+  if (key) key.provider = provider();
   return queueTx(async () => {
     const tx = new Transaction({
       signer: sponsor(), provider: provider(),
@@ -399,7 +399,7 @@ async function sendAsSponsorFor(key, ops, { rcLimit = K.rcLimit } = {}) {
     for (const op of ops) await tx.pushOperation(op);
     await tx.prepare();
     await tx.sign();                            // sponsor first: the payer check stops here
-    await key.signTransaction(tx.transaction);  // the account key, as a belt-and-braces second
+    if (key) await key.signTransaction(tx.transaction); // account key, belt and braces
     const send = new Transaction({ provider: provider() });
     send.transaction = tx.transaction;
     await sendTolerant(send);
@@ -534,6 +534,41 @@ async function bootstrapSmartAccount(key, credential) {
     well-formed, from a credential we expected, over THIS transaction —
     then the sponsor signs as payer and the CHAIN does the real
     verification (P-256, challenge, credential registry). */
+/** Ask the DEPLOYED sign module whether it accepts this signature, as a
+    read call. Returns { ok, logs } — the module logs exactly why it says no
+    ("credential not registered", "invalid signature", "txId mismatch"), so a
+    rejection is legible instead of surfacing as the chain's low-level
+    recovery assert. Never throws: a diagnostic must not break the path. */
+async function verifyPasskeyOnChain(account, sigB64u, txId) {
+  try {
+    const m = MODSIGN_ABI.methods.is_valid_signature;
+    const ser = modSignSerializer();
+    const args = await ser.serialize(
+      { sender: account, signature: sigB64u, tx_id: txId }, m.argument);
+    const res = await withRpcRetry(() => provider().readContract({
+      contract_id: K.modules.modSign,
+      entry_point: m.entry_point,
+      args: utils.encodeBase64url(args),
+    }));
+    const logs = (res && res.logs) || [];
+    let ok = null;
+    if (res && res.result) {
+      try {
+        const out = await ser.deserialize(utils.decodeBase64url(res.result), m.return);
+        ok = !!(out && out.value);
+      } catch (_) { /* leave ok null — the logs still tell the story */ }
+    } else if (res && logs.some((l) => /mod-sign-webauthn/.test(l))) {
+      /* protobuf omits `false`, so a rejection comes back with NO result
+         bytes — the module's own log line is the whole answer. Requiring
+         that line is what keeps a quiet RPC from reading as a rejection. */
+      ok = false;
+    }
+    return { ok, logs };
+  } catch (e) {
+    return { ok: null, logs: [], error: humanChainError(e) };
+  }
+}
+
 async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
   if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
   const recomputed = Transaction.computeTransactionId(signedTx.header);
@@ -565,6 +600,13 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
     throw new Error(`passkey signature rejected: ${e.message}`);
   }
 
+  /* Ask the chain itself before burning mana — and surface its reason. */
+  const pre = await verifyPasskeyOnChain(accountAddr, sigs[0], preparedId);
+  if (pre.ok === false) {
+    const why = pre.logs.length ? pre.logs.join(' | ') : 'the sign module rejected it';
+    throw new Error(`the chain rejected your passkey signature: ${why}`);
+  }
+
   const clean = {
     id: signedTx.id, header: signedTx.header,
     operations: signedTx.operations, signatures: [],
@@ -575,7 +617,15 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
     clean.signatures = clean.signatures.concat(sigs);
     const tx = new Transaction({ provider: provider() });
     tx.transaction = clean;
-    await sendTolerant(tx);
+    try { await sendTolerant(tx); }
+    catch (e) {
+      /* The pre-flight said yes (or couldn't tell) and the chain still said
+         no — carry the module's own log lines and the shapes it saw, so the
+         next report names a cause instead of a symptom. */
+      const why = pre.logs && pre.logs.length ? ` [sign module: ${pre.logs.join(' | ')}]` : '';
+      const sizes = clean.signatures.map((x) => utils.decodeBase64url(x).length).join(',');
+      throw new Error(`${humanChainError(e)}${why} (sigs ${sizes}; payer ${clean.header.payer}; payee ${clean.header.payee || '-'})`);
+    }
     try { await waitMined(clean.id); }
     catch (e) {
       const err = new Error(`transaction ${clean.id} not confirmed: ${humanChainError(e)}`);
@@ -614,7 +664,7 @@ module.exports = {
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,
   accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,
-  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor,
+  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor, verifyPasskeyOnChain,
   opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
   modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,
 };

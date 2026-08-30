@@ -29,9 +29,13 @@ const Fund = (() => {
     bridge_token: 'Bridging vKOIN → Koinos (Vortex, 1:1)…',
     deposit_eth: 'Depositing ETH into the Vortex bridge…',
     awaiting_signatures: 'Bridge guardians are signing (usually 2–3 minutes)…',
-    awaiting_redeem: 'Your KOIN is ready to land!',
+    awaiting_redeem: 'Landing your KOIN on your account…',
+    /* awaiting_redeem normally completes on its own; it only asks for a tap
+       if the chain refused the sponsor-submitted redeem (see needsTap). */
     awaiting_swap: 'vETH arrived — one more tap swaps it to KOIN.',
   };
+
+  const needsTap = (j) => j.status === 'awaiting_redeem' && !!j.needsTap;
 
   const SYM = { eth: 'ETH', usdc: 'USDC', usdt: 'USDT' };
 
@@ -257,14 +261,18 @@ const Fund = (() => {
     if (j) {
       const label = j.status === 'done' ? `🎉 Landed ${j.koinReceived ? koin(j.koinReceived) + ' ' : ''}KOIN on your account!`
         : j.status === 'error' ? 'Swap hit a snag: ' + (j.error || 'unknown error')
+        : needsTap(j) ? 'Your KOIN is ready to land!'
         : (STEP_LABEL[j.status] || j.status);
       $('#fund-job-label').textContent = label;
       $('#fund-job-sub').textContent = jobActive && j.estKoinOut
         ? `${j.amountLabel || ''} → ≈ ${koin(j.estKoinOut)} KOIN · route ${j.route}`
         : '';
-      $('#fund-spin').hidden = !jobActive || ['awaiting_redeem', 'awaiting_swap'].includes(j.status);
-      $('#btn-fund-land').hidden = !['awaiting_redeem', 'awaiting_swap'].includes(j.status);
-      $('#btn-fund-land').textContent = j.status === 'awaiting_swap' ? 'Swap vETH → KOIN — confirm with passkey' : 'Land my KOIN — confirm with passkey';
+      const tap = needsTap(j) || j.status === 'awaiting_swap';
+      $('#fund-spin').hidden = !jobActive || tap;
+      $('#btn-fund-land').hidden = !tap;
+      $('#btn-fund-land').textContent = j.status === 'awaiting_swap'
+        ? 'Swap vETH → KOIN — confirm with passkey'
+        : 'Land my KOIN — confirm with passkey';
       $('#btn-fund-retry').hidden = j.status !== 'error';
       $('#btn-fund-reset').hidden = !['done', 'error'].includes(j.status);
       $('#fund-job').className = 'status' + (j.status === 'done' ? ' ok' : j.status === 'error' ? ' err' : '');
