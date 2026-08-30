@@ -113,12 +113,25 @@
       on-chain reader parses correctly for every possible signature. 72 bytes. */
   function normalizeDerSignature(der) {
     const { r, s } = parseDer(der);
-    const r32 = pad32(r), s32 = pad32(s);
+    return derFromRawRS(concat(pad32(r), pad32(s)));
+  }
+
+  /** WebCrypto's ECDSA output is raw r‖s (64 bytes) — wrap it in the same
+      normalized DER shape the authenticator path produces. */
+  function derFromRawRS(rs) {
+    rs = toU8(rs);
+    if (rs.length !== 64) throw new Error('raw signature must be 64 bytes (r‖s)');
     const out = new Uint8Array(72);
     out.set([0x30, 0x46, 0x02, 0x21, 0x00], 0);
-    out.set(r32, 5);
+    out.set(rs.subarray(0, 32), 5);
     out.set([0x02, 0x21, 0x00], 37);
-    out.set(s32, 40);
+    out.set(rs.subarray(32), 40);
+    return out;
+  }
+
+  function concat(a, b) {
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
     return out;
   }
 
@@ -166,7 +179,7 @@
 
   return {
     encodeB64u, decodeB64u,
-    parseDer, normalizeDerSignature,
+    parseDer, normalizeDerSignature, derFromRawRS,
     packAuthenticationData, packSignatureBlob, challengeForTxId,
   };
 });

@@ -38,14 +38,31 @@
     <button class="cta" id="btn-go">Create Account or Sign In</button>
     <p class="alt" id="alt-unlock" hidden>Made your account on another device?
       <a href="#" id="btn-unlock-existing">Open it with a synced passkey</a></p>
+    <p class="alt">Lost every passkey? <a href="#" id="btn-open-recover">Recover with your kit</a></p>
     <p class="unsupported" id="no-passkey" hidden>This browser has no biometric passkey support —
       try a phone, or a browser with Face ID / fingerprint / Windows Hello.</p>
     <p class="note" id="demo-note" hidden>Demo mode — no chain connected yet; the passkey flow is real, transactions simulate.</p>
   </section>
 
+  <!-- ─── Recovery ─── -->
+  <section id="view-recover" class="wallet" hidden>
+    <div class="card">
+      <div class="k">Recover your account</div>
+      <p class="hint" style="margin:6px 0 10px">Paste the contents of your recovery kit file
+        (<code>koinos-recovery-kit-….txt</code>). Its key signs you in and can register a brand-new
+        passkey — no old passkey needed.</p>
+      <textarea id="kit-input" rows="7" spellcheck="false" placeholder="KOINOS BIO WALLET — RECOVERY KIT&#10;…"></textarea>
+      <div class="status" id="recover-status" hidden></div>
+      <button class="cta small" id="btn-recover">Open my account</button>
+      <p class="alt"><a href="#" id="btn-recover-back">← Back</a></p>
+    </div>
+  </section>
+
   <!-- ─── Wallet ─── -->
   <section id="view-wallet" class="wallet" hidden>
     <div class="status" id="activation" hidden></div>
+    <div class="status" id="recovery-banner" hidden>Recovery mode — you're signed in with your kit key.
+      Mint a fresh passkey now: <button class="ghost small" id="btn-rekey">Add a new passkey to this device</button></div>
 
     <div class="card addr-card">
       <div class="k">Your smart account</div>
@@ -74,11 +91,44 @@
     </div>
 
     <div class="card">
+      <div class="k">Backups</div>
+      <p class="hint" id="backup-nudge" style="margin:6px 0 8px" hidden>One passkey is one point of failure —
+        if its account (Google / Apple) is ever lost, so is the wallet. Add a second passkey from another
+        device, or download a recovery kit you keep offline.</p>
+      <ul class="cred-list" id="cred-list"></ul>
+      <p class="hint" id="kit-armed" style="margin:4px 0 8px" hidden>✓ A recovery kit is active for this
+        account — the file you saved opens it all by itself.</p>
+      <div class="status" id="backup-status" hidden></div>
+      <div class="btn-row">
+        <button class="ghost" id="btn-add-passkey">Add backup passkey</button>
+        <button class="ghost" id="btn-make-kit">Create recovery kit</button>
+      </div>
+      <div id="backup-box" hidden>
+        <p class="hint" style="margin:10px 0 6px">New passkey captured ✓ — now confirm with your
+          <strong>current</strong> passkey to register it on-chain.</p>
+        <div class="btn-row">
+          <button class="cta small" id="btn-backup-activate">Confirm and activate backup</button>
+          <button class="ghost" id="btn-backup-cancel">Discard</button>
+        </div>
+      </div>
+      <div id="kit-box" hidden>
+        <p class="hint" style="margin:10px 0 6px"><strong>Save this file somewhere safe and offline</strong> —
+          it just downloaded, and it's shown below in case you'd rather copy it by hand. Anyone holding it
+          controls the account. It does nothing until you activate it.</p>
+        <pre class="kit-text" id="kit-text"></pre>
+        <div class="btn-row">
+          <button class="cta small" id="btn-kit-activate">I saved it — activate on-chain</button>
+          <button class="ghost" id="btn-kit-cancel">Discard</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="k">How this account works</div>
-      <p class="hint" style="margin:6px 0 0">There is <strong>no private key to back up</strong> — your account is an
-        on-chain contract (Veive protocol) and your passkey is its registered authority. Every send is a biometric
-        signature that the blockchain verifies itself. Losing this device loses nothing: your passkey syncs through
-        iCloud Keychain / Google Password Manager, and the same scan opens the account anywhere.</p>
+      <p class="hint" style="margin:6px 0 0">Your account is an on-chain contract (Veive protocol); every key on it —
+        passkeys and the recovery kit alike — is a registered credential the blockchain checks itself. Passkeys sync
+        through iCloud Keychain / Google Password Manager; the recovery kit is your manual, offline fallback. Any one
+        of them signs; losing one loses nothing while another remains.</p>
     </div>
   </section>
 </main>
@@ -90,6 +140,7 @@
 
 <script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
+<script src="/js/recovery.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

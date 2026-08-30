@@ -69,6 +69,31 @@ const Passkey = (() => {
     return { credentialId: b64u(cred.rawId), publicKey: b64u(spki) };
   }
 
+  /** A backup credential for an EXISTING account. Unlike the primary, any
+      authenticator is welcome — another device, another ecosystem, a USB
+      security key — that's what makes it a backup. Existing credentials are
+      excluded so the same authenticator can't double-register. */
+  async function createBackupCredential(excludeIds) {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        rp: { name: 'Koinos Bio Wallet', id: RP_ID },
+        user: {
+          id: crypto.getRandomValues(new Uint8Array(16)),
+          name: 'Koinos Smart Account (backup)',
+          displayName: 'Koinos Smart Account (backup)',
+        },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+        excludeCredentials: (excludeIds || []).map((id) => ({ type: 'public-key', id: fromB64u(id) })),
+      },
+    });
+    const resp = cred.response;
+    const spki = typeof resp.getPublicKey === 'function' ? resp.getPublicKey() : null;
+    if (!spki) throw new Error('The authenticator did not hand over a public key');
+    return { credentialId: b64u(cred.rawId), publicKey: b64u(spki) };
+  }
+
   /** A WebAuthn assertion over the given challenge bytes. Empty allow-list
       opens the platform's picker (synced passkeys included). */
   async function assert(challengeBytes, allowIds) {
@@ -90,12 +115,18 @@ const Passkey = (() => {
   }
 
   /** Sign-in gesture: any assertion identifies the credential (reads are
-      public; real authority is checked per-transaction by the chain). */
+      public; real authority is checked per-transaction by the chain). If the
+      remembered credential is gone from this device (lost phone, stale
+      browser data), fall back to the discoverable picker so any surviving
+      credential — a backup passkey included — can answer. */
   async function identify() {
     const id = storedId();
-    const a = await assert(crypto.getRandomValues(new Uint8Array(32)), id ? [id] : []);
-    return a.credentialId;
+    if (id) {
+      try { return (await assert(crypto.getRandomValues(new Uint8Array(32)), [id])).credentialId; }
+      catch (e) { if (!e || e.name !== 'NotAllowedError') throw e; }
+    }
+    return (await assert(crypto.getRandomValues(new Uint8Array(32)), [])).credentialId;
   }
 
-  return { supported, platformReady, remembered, storedId, forget, setRpId, createCredential, assert, identify };
+  return { supported, platformReady, remembered, storedId, forget, setRpId, createCredential, createBackupCredential, assert, identify };
 })();

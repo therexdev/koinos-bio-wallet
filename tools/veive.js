@@ -40,6 +40,21 @@ function configure(opts) {
     S.store = JSON.parse(fs.readFileSync(file(), 'utf8'));
     S.store.accounts ||= {}; S.store.byCredential ||= {};
   } catch (_) { S.store = { accounts: {}, byCredential: {} }; }
+  /* v0.2.0 records had a single credentialId — lift them into the
+     credentials list (id, label, kind, ts) that backups introduced. */
+  let migrated = false;
+  for (const rec of Object.values(S.store.accounts)) {
+    if (!rec.credentials) {
+      rec.credentials = rec.credentialId
+        ? [{ id: rec.credentialId, label: rec.name || 'passkey', kind: 'passkey', ts: rec.ts }]
+        : [];
+      migrated = true;
+    }
+    for (const c of rec.credentials) {
+      if (S.store.byCredential[c.id] !== rec.address) { S.store.byCredential[c.id] = rec.address; migrated = true; }
+    }
+  }
+  if (migrated) { try { persist(); } catch (_) {} }
 }
 
 function persist() {
@@ -71,6 +86,7 @@ const publicView = (rec) => rec && ({
   txs: rec.txs || {},
   error: rec.error || undefined,
   name: rec.name || undefined,
+  credentials: (rec.credentials || []).map((c) => ({ id: c.id, label: c.label, kind: c.kind, ts: c.ts })),
 });
 
 /* ---------------- lifecycle ---------------- */
@@ -89,11 +105,13 @@ function createOrResume({ credentialId, publicKey, name }) {
   }
 
   const key = chain.newAccountKey();
+  const label = String(name || 'passkey').slice(0, 40);
   const rec = {
     address: key.getAddress(),
     credentialId,
     publicKey: String(publicKey),
-    name: String(name || 'passkey').slice(0, 40),
+    name: label,
+    credentials: [{ id: credentialId, label, kind: 'passkey', ts: Date.now() }],
     bootstrapWif: key.getPrivateKey('wif'),
     step: S.demo ? 'active' : 'pending',
     ts: Date.now(),
@@ -104,6 +122,27 @@ function createOrResume({ credentialId, publicKey, name }) {
   persist();
   if (!S.demo) runBootstrap(rec);
   return publicView(rec);
+}
+
+/** A registered-and-mined extra credential (backup passkey or recovery key). */
+function addCredential(address, { id, label, kind }) {
+  const rec = S.store.accounts[String(address || '')];
+  if (!rec) return null;
+  if (!rec.credentials.some((c) => c.id === id)) {
+    rec.credentials.push({ id, label: String(label || 'backup').slice(0, 40), kind: kind === 'recovery' ? 'recovery' : 'passkey', ts: Date.now() });
+  }
+  S.store.byCredential[id] = rec.address;
+  persist();
+  return publicView(rec);
+}
+
+function hasCredential(address, id) {
+  const rec = S.store.accounts[String(address || '')];
+  return !!(rec && rec.credentials.some((c) => c.id === id));
+}
+function credentialCount(address) {
+  const rec = S.store.accounts[String(address || '')];
+  return rec ? rec.credentials.length : 0;
 }
 
 async function runBootstrap(rec) {
@@ -147,20 +186,23 @@ async function whoami(credentialId) {
   if (S.demo || !chain.veiveReady()) return null;
   const addr = await chain.credentialAddress(id).catch(() => null);
   if (!addr) return null;
-  const rec = {
+  const rec = S.store.accounts[addr] || {
     address: addr, credentialId: id, publicKey: '', name: 'passkey',
-    bootstrapWif: '', step: 'active', ts: Date.now(), txs: {}, external: true,
+    credentials: [], bootstrapWif: '', step: 'active', ts: Date.now(), txs: {}, external: true,
   };
-  S.store.accounts[addr] = S.store.accounts[addr] || rec;
+  if (!rec.credentials.some((c) => c.id === id)) {
+    rec.credentials.push({ id, label: 'passkey', kind: 'passkey', ts: Date.now() });
+  }
+  S.store.accounts[addr] = rec;
   S.store.byCredential[id] = addr;
   persist();
-  return publicView(S.store.accounts[addr]);
+  return publicView(rec);
 }
 
 /** Expected credential ids for an address — the submit-path allowlist. */
 function credentialsFor(address) {
   const rec = S.store.accounts[String(address || '')];
-  return rec ? [rec.credentialId] : [];
+  return rec ? rec.credentials.map((c) => c.id) : [];
 }
 
 function isSmartAccount(address) {
@@ -188,4 +230,8 @@ function reconcile() {
   return pending.length;
 }
 
-module.exports = { configure, createOrResume, status, whoami, credentialsFor, isSmartAccount, accountsCreatedSince, reconcile };
+module.exports = {
+  configure, createOrResume, status, whoami, credentialsFor, isSmartAccount,
+  accountsCreatedSince, reconcile, addCredential, hasCredential, credentialCount,
+  CRED_ID, validPublicKey,
+};

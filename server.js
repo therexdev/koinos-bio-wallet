@@ -59,6 +59,7 @@ const CFG = {
   maxTransfersPerDayAddr: parseInt(process.env.MAX_TRANSFERS_PER_DAY || '30', 10),
   maxAccountsPerDayIp: parseInt(process.env.MAX_ACCOUNTS_PER_DAY || '3', 10),
   maxAccountsPerDayGlobal: parseInt(process.env.MAX_ACCOUNTS_PER_DAY_GLOBAL || '20', 10),
+  maxCredentialsPerAccount: parseInt(process.env.MAX_CREDENTIALS_PER_ACCOUNT || '6', 10),
   demo: process.env.DEMO_MODE === '1',
 };
 
@@ -194,6 +195,44 @@ api.account = async (params) => {
   return { ok: true, koin, mana, smart };
 };
 
+/** Prepare the transaction that registers ONE more credential on the
+    account — a backup passkey from another device, or the recovery kit's
+    software key. The transaction only counts once an EXISTING credential
+    signs it (the chain enforces that; we only build it). */
+api.prepareRegister = async (body, ip) => {
+  const address = String(body.address || '');
+  const rec = veive.status(String(body.signerCredentialId || ''));
+  if (!rec || rec.address !== address) throw httpError(400, 'that account is not yours to change');
+  if (rec.step !== 'active') throw httpError(400, 'the account is still activating — try again in a minute');
+  const cred = body.newCredential || {};
+  const id = String(cred.credentialId || '');
+  const kind = cred.kind === 'recovery' ? 'recovery' : 'passkey';
+  const label = String(cred.label || (kind === 'recovery' ? 'recovery key' : 'backup passkey')).slice(0, 40);
+  if (!veive.CRED_ID.test(id)) throw httpError(400, 'credential id looks wrong');
+  if (!veive.validPublicKey(cred.publicKey)) throw httpError(400, 'the new credential did not provide a P-256 public key this chain can verify');
+  if (veive.hasCredential(address, id)) throw httpError(400, 'that credential is already on this account');
+  if (veive.credentialCount(address) >= CFG.maxCredentialsPerAccount) {
+    throw httpError(400, `this account already holds ${CFG.maxCredentialsPerAccount} credentials`);
+  }
+  if (rateLimited('reg:addr:' + address, 6, 24 * 3600000)) throw httpError(429, 'that account added several credentials today — come back tomorrow');
+  if (rateLimited('reg:ip:' + ip, 12, 24 * 3600000)) throw httpError(429, 'too many credential changes from this connection today');
+
+  const newCred = { id, label, kind, publicKey: String(cred.publicKey) };
+  if (DEMO) {
+    const txId = demoTxid();
+    const ref = rememberPrepared(txId, address, { demo: true, smart: true, register: newCred });
+    return { ok: true, demo: true, ref, tx: { id: txId } };
+  }
+  const sponsorMana = await chain.mana(chain.sponsorAddress());
+  if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
+  const ops = [await chain.opRegisterCredential(address, {
+    credential_id: id, public_key: String(cred.publicKey), name: label,
+  })];
+  const tx = await chain.prepareUserTx(address, ops, { rcLimit: chain.K.rcLimitSmart });
+  const ref = rememberPrepared(tx.id, address, { smart: true, register: newCred });
+  return { ok: true, ref, tx };
+};
+
 /** Prepare a sponsored KOIN transfer: sponsor pays, the account signs.
     For smart accounts no proof is needed here — a prepared transaction is
     inert until the passkey signs it and the CHAIN verifies that signature;
@@ -252,12 +291,16 @@ api.submit = async (body) => {
   PREPARED.delete(String(body.ref));
   if (known.demo) {
     if (known.smart) await demoCheckSmartSignature(body.transaction, known);
-    return { ok: true, demo: true, txid: known.txId, explorer: null };
+    const smart = known.register ? veive.addCredential(known.address, known.register) : undefined;
+    return { ok: true, demo: true, txid: known.txId, explorer: null, smart };
   }
   const txid = known.smart
     ? await chain.submitSmartCosigned(body.transaction, known.txId, known.address, veive.credentialsFor(known.address))
     : await chain.submitCosigned(body.transaction, known.txId, known.address);
-  return { ok: true, txid, explorer: explorerTx(txid) };
+  /* The register landed on-chain — mirror it into the store so sign-in and
+     the submit allowlist recognize the new credential immediately. */
+  const smart = known.register ? veive.addCredential(known.address, known.register) : undefined;
+  return { ok: true, txid, explorer: explorerTx(txid), smart };
 };
 
 /** Demo-mode teeth: the browser's packed signature must be exactly what
@@ -372,7 +415,8 @@ const GET_ROUTES = {
 };
 const POST_ROUTES = {
   '/api/create-account': api.createAccount, '/api/whoami': api.whoami,
-  '/api/prepare': api.prepare, '/api/submit': api.submit,
+  '/api/prepare': api.prepare, '/api/prepare-register': api.prepareRegister,
+  '/api/submit': api.submit,
 };
 
 const server = http.createServer(async (req, res) => {

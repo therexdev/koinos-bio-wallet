@@ -121,3 +121,29 @@ footer {
 }
 
 @media (max-width: 440px) { .row { grid-template-columns: 1fr; } }
+
+/* ─── backups & recovery ─── */
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.ghost.small, .cta.small { padding: 9px 14px; font-size: .9rem; }
+.cred-list { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 6px; }
+.cred-list li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: .92rem; }
+.cred-kind {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--accent-soft);
+}
+.cred-kind.recovery { border-color: rgba(74,222,128,.5); color: var(--good); }
+.cred-now { color: var(--good); font-size: .82rem; }
+.cred-ts { color: var(--dim); font-size: .8rem; margin-left: auto; }
+.kit-text {
+  background: var(--inset); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; font-size: .78rem; line-height: 1.5; white-space: pre-wrap;
+  word-break: break-all; user-select: all; margin: 0;
+}
+#view-recover textarea, textarea#kit-input {
+  width: 100%; box-sizing: border-box; background: var(--inset); color: inherit;
+  border: 1px solid var(--line-strong); border-radius: 10px; padding: 12px;
+  font: inherit; font-size: .82rem; line-height: 1.5; resize: vertical; margin: 4px 0 10px;
+}
+#view-recover textarea:focus { outline: none; border-color: var(--accent); }
+#recovery-banner { border-color: rgba(250,204,21,.5); }
+#recovery-banner .ghost { margin-left: 6px; }

@@ -61,6 +61,33 @@ solely to point at our verifier — the rebuild is byte-identical to their npm
 binary when built with their address), plus one 97KB Account contract per
 user, uploaded at signup.
 
+## Backups: more credentials, same account
+
+The sign module keeps a **list** of credentials per account, and any
+registered credential signs with full authority — so both backup paths are
+the same mechanism, a `register` transaction authorized by a credential the
+account already trusts:
+
+- **Backup passkey** — two deliberate ceremonies: the NEW authenticator
+  (another device, another ecosystem, a USB security key) creates its
+  credential, then the CURRENT passkey confirms the registration. From then
+  on losing the primary (a Google account, say) costs nothing — the backup
+  opens the account.
+- **Recovery kit** — a manual, offline fallback: the page generates a plain
+  P-256 keypair with WebCrypto, the user downloads it as a small text file
+  (account address + credential id + private key — the server never sees the
+  key), and only after saving it is it registered on-chain. To sign, the kit
+  builds a synthetic WebAuthn-shaped assertion — byte-for-byte what the
+  deployed sign module verifies (`node tests/recovery-assertion.test.js`
+  proves the whole pipeline, negatives included). Lose EVERY passkey and the
+  kit still signs you in, re-keys the account with a fresh passkey, or moves
+  the funds.
+
+Registered credentials are capped per account (`MAX_CREDENTIALS_PER_ACCOUNT`,
+default 6) and rate-limited. The one truly fatal state left is losing every
+passkey **and** the kit at once. (The module also has `unregister` for
+retiring lost credentials — not yet surfaced in the UI.)
+
 ## Honest mana economics
 
 | action | burns (≈) |
@@ -68,6 +95,7 @@ user, uploaded at signup.
 | shared infrastructure (once) | 160 mana |
 | **each new account** | **85 mana** (the 97KB contract upload + module setup) |
 | each passkey-verified transfer | 1–10 mana (on-chain P-256 costs more than a plain transfer) |
+| registering a backup credential | 1–5 mana |
 
 Mana regenerates ~20%/day of KOIN held. A sponsor holding **200 KOIN** can
 mint 2 accounts immediately and roughly one more every two days sustained —
@@ -133,6 +161,7 @@ node server.js
 | `TRUST_PROXY_HOPS` | `0` | proxy hops in front (Hostinger = 1) for real client IPs |
 | `MAX_ACCOUNTS_PER_DAY` | `3` | account creations per IP per day |
 | `MAX_ACCOUNTS_PER_DAY_GLOBAL` | `20` | account creations per day, total |
+| `MAX_CREDENTIALS_PER_ACCOUNT` | `6` | passkeys + recovery kits per account |
 | `MIN_CREATE_MANA` | `120` | refuse signups when sponsor mana is below this |
 | `MAX_TRANSFERS_PER_DAY` | `30` | per-address daily transfer budget (per-IP is 2×) |
 | `MIN_SPONSOR_MANA` | `5` | refuse transfers when sponsor mana is below this |
@@ -163,10 +192,10 @@ WebAuthn requires HTTPS (any real domain qualifies; `localhost` works for dev).
   (`data/accounts.json`, mode 600) — powerless after bootstrap, kept to heal
   interrupted signups. It cannot move an active account: with the validator
   installed, the chain accepts only passkey-signed transactions.
-- **Recovery**: your passkey syncs via iCloud Keychain / Google Password
-  Manager; any synced device opens the account. A lost passkey is currently a
-  lost account (module-based recovery is the natural next Veive step) — say
-  so honestly to users before real value goes in.
+- **Recovery**: passkeys sync via iCloud Keychain / Google Password Manager,
+  and the account survives any single loss once a backup passkey or the
+  recovery kit is registered (see *Backups* above). Nudge users to add one —
+  a single credential is a single point of failure.
 - **Send-path hardening** (learned on mainnet): ambiguous node replies are
   arbitrated by a mined-poll; RPC failover; error bodies unwrapped; and the
   sponsor's signature is ordered BEFORE the WebAuthn blob — the chain's payer
