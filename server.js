@@ -414,7 +414,7 @@ api.fundStart = async (body, ip) => {
 
 api.fundResume = async (body) => {
   const account = fundAccount(body.credentialId);
-  try { return { ok: true, job: funding.resume(account) }; }
+  try { return { ok: true, job: await funding.resume(account) }; }
   catch (e) { throw httpError(400, e.message); }
 };
 

@@ -343,11 +343,55 @@ async function start(account, { asset, amount, route } = {}) {
   return publicJob(job(account));
 }
 
-function resume(account) {
+/** Where is this job REALLY up to?
+
+    A step name is only our record of what we believed; the tokens sitting at
+    the transit address are what actually happened. When those disagree — a
+    balance read that lagged its block, a reply we lost, a step that landed
+    after we gave up on it — the chain wins. Retrying from the step name would
+    then re-send a swap whose input is already spent, which is exactly how a
+    stale read turns into a second, more confusing failure.
+
+    Returns the corrected step, or null when the balances say nothing useful
+    (then the recorded step is the best we have). */
+async function reconcileRouteC(account, j) {
+  if (j.route !== "C" || j.ethTxHash) return null; // already bridged: nothing at the address
+  const t = transitFor(account);
+  if (!t) return null;
+  const p = await ethProvider();
+  const [vkoin, usdt, usdc] = await Promise.all([
+    swap.balanceOf(p, RC.VKOIN, t.ethAddress),
+    swap.balanceOf(p, RC.USDT, t.ethAddress),
+    swap.balanceOf(p, RC.USDC, t.ethAddress),
+  ]);
+  /* vKOIN only ever exists here mid-flow, so all of it belongs to this job
+     and all of it must bridge — leaving a remainder would strand it. */
+  if (vkoin > 0n) return { status: "approve_bridge", vkoinSats: vkoin.toString() };
+  /* USDT and USDC can also be a deposit the user made directly, so never
+     sweep more than this job was started for. */
+  if (usdt > 0n) {
+    const want = j.usdtSats ? BigInt(j.usdtSats) : usdt;
+    return { status: "approve_permit2", usdtSats: (usdt < want ? usdt : want).toString() };
+  }
+  if (j.asset === "usdc" && usdc > 0n) {
+    const want = j.usdcSats ? BigInt(j.usdcSats) : usdc;
+    return { status: "approve_v3_usdc", usdcSats: (usdc < want ? usdc : want).toString() };
+  }
+  return null;
+}
+
+async function resume(account) {
   const j = job(account);
   if (!j || j.status !== "error" || !j.failedAt) throw new Error("Nothing to resume");
-  const back = j.failedAt === "awaiting_redeem" ? "awaiting_signatures" : j.failedAt;
-  saveJob(account, { ...j, status: back, error: null, pendingTx: null, sigStartedAt: Date.now() });
+  let back = { status: j.failedAt === "awaiting_redeem" ? "awaiting_signatures" : j.failedAt };
+  if (!S.demo) {
+    try { back = (await reconcileRouteC(account, j)) || back; }
+    catch (_) { /* can't read the chain right now — retry from the record */ }
+  }
+  saveJob(account, {
+    ...j, ...back, error: null, failedAt: null, pendingTx: null,
+    redeemAttempts: 0, sigStartedAt: Date.now(),
+  });
   return publicJob(job(account));
 }
 function reset(account) {
@@ -373,11 +417,35 @@ async function tick() {
     } catch (e) {
       const msg = String(e.message || e);
       if (isTransient(msg)) { dropProvider(); }
-      else saveJob(account, { ...job(account), status: "error", error: msg, failedAt: j.status });
+      else await failOrRecover(account, j, msg);
     } finally {
       BUSY.delete(account);
     }
   }
+}
+
+/** A step failed. Before calling it an error, ask the chain where the money
+    actually is: a step can fail on a read while its transaction succeeded, and
+    parking that job at "error" invites a Retry that re-sends a swap whose
+    input is already spent. If the balances name a different step, take it and
+    carry on; the user never sees a failure that wasn't one. */
+const MAX_RECOVERIES = 3;
+async function failOrRecover(account, j, msg) {
+  if (!S.demo && (j.recoveries || 0) < MAX_RECOVERIES) {
+    try {
+      const at = await reconcileRouteC(account, j);
+      /* Only a DIFFERENT step is progress. Re-entering the step that just
+         failed — or bouncing between two of them — is a loop, not a
+         recovery, so the counter ends it and the user sees the real error. */
+      if (at && at.status !== j.status) {
+        return saveJob(account, {
+          ...job(account), ...at, error: null, pendingTx: null,
+          recoveries: (j.recoveries || 0) + 1, recovered: msg.slice(0, 160),
+        });
+      }
+    } catch (_) { /* can't read the chain — report the original failure */ }
+  }
+  saveJob(account, { ...job(account), status: "error", error: msg, failedAt: j.status });
 }
 
 const isTransient = (msg) =>
@@ -396,7 +464,7 @@ async function advanceEth(account, j) {
   if (j.pendingTx) {
     const r = await receipt(j.pendingTx);
     if (!r) return;
-    return onEthConfirmed(account, j);
+    return onEthConfirmed(account, j, r);
   }
   const now = Math.floor(Date.now() / 1000);
   switch (j.status) {
@@ -474,7 +542,22 @@ async function advanceEth(account, j) {
   }
 }
 
-async function onEthConfirmed(account, j) {
+/** How much of `token` did the confirmed transaction actually deliver?
+
+    Its own receipt answers first: the Transfer logs are part of the block we
+    already have, so nothing can lag. Only if the token logged no standard
+    Transfer do we fall back to a balance diff — and even then we read AT the
+    transaction's own block, never at whatever "latest" some node believes,
+    because a node one block behind reports the swap as producing nothing and
+    strands a job that in fact succeeded. */
+async function deliveredBy(p, r, token, owner, beforeSats) {
+  const fromLogs = swap.receivedInTx(r, token, owner);
+  if (fromLogs !== null) return fromLogs;
+  const now = await swap.balanceOf(p, token, owner, r.blockNumber);
+  return now - BigInt(beforeSats);
+}
+
+async function onEthConfirmed(account, j, r) {
   const wallet = await transitWallet(account);
   const p = wallet.provider;
   const confirmedHash = j.pendingTx;
@@ -484,27 +567,20 @@ async function onEthConfirmed(account, j) {
       return saveJob(account, { ...base, status: j.afterGas, afterGas: undefined });
     case "approve_v3_usdc":
       return saveJob(account, { ...base, status: "swap_usdc_usdt" });
-    case "swap_usdc_usdt": {
-      const usdtNow = await swap.balanceOf(p, RC.USDT, wallet.address);
-      const usdtSats = (usdtNow - BigInt(j.usdtBefore)).toString();
-      if (BigInt(usdtSats) <= 0n) throw new Error("USDC→USDT swap produced no USDT");
-      return saveJob(account, { ...base, status: "approve_permit2", usdtSats });
-    }
+    case "swap_usdc_usdt":
     case "swap_eth_usdt": {
-      const usdtNow = await swap.balanceOf(p, RC.USDT, wallet.address);
-      const usdtSats = (usdtNow - BigInt(j.usdtBefore)).toString();
-      if (BigInt(usdtSats) <= 0n) throw new Error("ETH→USDT swap produced no USDT");
-      return saveJob(account, { ...base, status: "approve_permit2", usdtSats });
+      const got = await deliveredBy(p, r, RC.USDT, wallet.address, j.usdtBefore);
+      if (got <= 0n) throw new Error(`${j.status === "swap_eth_usdt" ? "ETH" : "USDC"}→USDT swap produced no USDT`);
+      return saveJob(account, { ...base, status: "approve_permit2", usdtSats: got.toString() });
     }
     case "approve_permit2":
       return saveJob(account, { ...base, status: "approve_ur" });
     case "approve_ur":
       return saveJob(account, { ...base, status: "swap_usdt_vkoin" });
     case "swap_usdt_vkoin": {
-      const vkoinNow = await swap.balanceOf(p, RC.VKOIN, wallet.address);
-      const vkoinSats = (vkoinNow - BigInt(j.vkoinBefore)).toString();
-      if (BigInt(vkoinSats) <= 0n) throw new Error("USDT→vKOIN swap produced no vKOIN");
-      return saveJob(account, { ...base, status: "approve_bridge", vkoinSats });
+      const got = await deliveredBy(p, r, RC.VKOIN, wallet.address, j.vkoinBefore);
+      if (got <= 0n) throw new Error("USDT→vKOIN swap produced no vKOIN");
+      return saveJob(account, { ...base, status: "approve_bridge", vkoinSats: got.toString() });
     }
     case "approve_bridge":
       return saveJob(account, { ...base, status: "bridge_token" });

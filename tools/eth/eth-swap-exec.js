@@ -28,8 +28,34 @@ const ERC20_ABI = [
 function erc20(provider, token) {
   return new ethers.Contract(token, ERC20_ABI, provider);
 }
-async function balanceOf(provider, token, owner) {
-  return await erc20(provider, token).balanceOf(owner);
+async function balanceOf(provider, token, owner, blockTag) {
+  return await erc20(provider, token).balanceOf(owner, blockTag ? { blockTag } : {});
+}
+
+// Transfer(address indexed from, address indexed to, uint256 value)
+const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
+const topicAddr = (a) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+
+// What did THIS transaction actually deliver? Reading a balance after the fact
+// races the node: getTransactionReceipt can be served by a node that has the
+// block while the follow-up balanceOf is served by one that doesn't, and the
+// swap then looks like it produced nothing. The receipt carries its own
+// Transfer logs, so it answers without a second read and without lag.
+// Returns the NET amount of `token` that reached `owner` in this transaction,
+// or null when the token logged no standard Transfer (caller should fall back).
+function receivedInTx(receipt, token, owner) {
+  const logs = (receipt && receipt.logs) || [];
+  const to = topicAddr(owner);
+  let net = 0n, seen = false;
+  for (const l of logs) {
+    if (!l.address || l.address.toLowerCase() !== token.toLowerCase()) continue;
+    if (!l.topics || l.topics.length !== 3 || l.topics[0] !== TRANSFER_TOPIC) continue;
+    seen = true;
+    const value = BigInt(l.data);
+    if (l.topics[2].toLowerCase() === to) net += value;
+    if (l.topics[1].toLowerCase() === to) net -= value;
+  }
+  return seen ? net : null;
 }
 async function allowance(provider, token, owner, spender) {
   return await erc20(provider, token).allowance(owner, spender);
@@ -115,6 +141,67 @@ function buildUsdtToVkoinTx({ usdtAmount, minVkoinOut, deadline }) {
   return { to: RC.UNIVERSAL_ROUTER, data, value: 0n };
 }
 
+// ---- revert decoding ----
+// "execution reverted (unknown custom error)" names nothing you can act on.
+// Selectors are computed from signatures here rather than pasted as constants,
+// so a typo cannot silently mislabel a failure.
+const REVERT_SIGS = [
+  // Permit2 — the usual reason a v4 swap won't even estimate
+  ["AllowanceExpired(uint256)", "the Permit2 approval expired"],
+  ["InsufficientAllowance(uint256)", "the Permit2 allowance is too small"],
+  ["ExcessiveInvalidation()", "Permit2 nonce already used"],
+  // Uniswap v4 / UniversalRouter
+  ["V4TooLittleReceived(uint256,uint256)", "the pool would return less than the minimum you set (price moved)"],
+  ["TransactionDeadlinePassed()", "the swap deadline passed before it was mined"],
+  ["CurrencyNotSettled()", "the swap did not settle — usually the input token was already spent"],
+  ["PoolNotInitialized()", "that Uniswap pool is not initialized"],
+  ["InvalidEthSender()", "the router rejected the ETH sender"],
+  // solmate/solady ERC-20 helpers used across these routers
+  ["TransferFromFailed()", "the token transfer failed — usually the input token was already spent"],
+  ["TransferFailed()", "the token transfer failed"],
+];
+const REVERT_BY_SELECTOR = new Map(
+  REVERT_SIGS.map(([sig, why]) => [ethers.id(sig).slice(0, 10), { name: sig.replace(/\(.*/, ""), why }])
+);
+// UniversalRouter wraps a failing command; the inner bytes are the real error.
+const EXECUTION_FAILED = ethers.id("ExecutionFailed(uint256,bytes)").slice(0, 10);
+
+function revertData(e) {
+  for (const d of [e && e.data, e && e.info && e.info.error && e.info.error.data,
+                   e && e.error && e.error.data, e && e.value]) {
+    if (typeof d === "string" && /^0x[0-9a-fA-F]*$/.test(d) && d.length >= 10) return d;
+  }
+  return null;
+}
+
+/** Turn revert bytes into something a person can act on. Always returns a
+    string; falls back to naming the raw selector so an unmapped error is at
+    least identifiable instead of "unknown". */
+function describeRevert(e, depth = 0) {
+  const data = revertData(e);
+  if (!data) return e && (e.shortMessage || e.message) ? String(e.shortMessage || e.message) : String(e);
+  return describeRevertData(data, depth);
+}
+
+function describeRevertData(data, depth = 0) {
+  const sel = data.slice(0, 10);
+  try {
+    if (sel === "0x08c379a0") { // Error(string)
+      return coder.decode(["string"], "0x" + data.slice(10))[0];
+    }
+    if (sel === "0x4e487b71") { // Panic(uint256)
+      return `contract panic 0x${coder.decode(["uint256"], "0x" + data.slice(10))[0].toString(16)}`;
+    }
+    if (sel === EXECUTION_FAILED && depth < 3) {
+      const [index, inner] = coder.decode(["uint256", "bytes"], "0x" + data.slice(10));
+      const why = inner && inner !== "0x" ? describeRevertData(inner, depth + 1) : "no reason given";
+      return `router command ${index} failed: ${why}`;
+    }
+  } catch (_) { /* fall through to the selector */ }
+  const known = REVERT_BY_SELECTOR.get(sel);
+  return known ? `${known.name} — ${known.why}` : `unrecognized contract error ${sel}`;
+}
+
 // ---- single-tx sender with gas estimation + EIP-1559 fees ----
 // Estimates first so a would-revert tx throws before anything is broadcast.
 async function sendTx(wallet, req, { gasNumerator = 12n, gasDenominator = 10n } = {}) {
@@ -123,7 +210,7 @@ async function sendTx(wallet, req, { gasNumerator = 12n, gasDenominator = 10n } 
   try {
     gas = await wallet.estimateGas(txReq);
   } catch (e) {
-    throw new Error(`Transaction would revert: ${e.shortMessage || e.message || e}`);
+    throw new Error(`the network rejected it before sending — ${describeRevert(e)}`);
   }
   const fee = await wallet.provider.getFeeData();
   const sent = await wallet.sendTransaction({
@@ -137,6 +224,8 @@ async function sendTx(wallet, req, { gasNumerator = 12n, gasDenominator = 10n } 
 module.exports = {
   ERC20_ABI,
   balanceOf,
+  receivedInTx,
+  describeRevert,
   allowance,
   buildApproveTx,
   buildEthToUsdtTx,
