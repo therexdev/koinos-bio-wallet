@@ -32,8 +32,10 @@ const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
 const CFG = {
   port: parseInt(process.env.PORT || '3000', 10),
-  network: process.env.KOINOS_NETWORK || 'harbinger',
-  sponsorWif: process.env.SPONSOR_WIF || '',
+  network: (process.env.KOINOS_NETWORK || 'harbinger').trim(),
+  /* trimmed — a stray space or newline pasted into a hosting panel's env
+     field must not break the key parse */
+  sponsorWif: (process.env.SPONSOR_WIF || '').trim(),
   /* Shared smart-account infrastructure (tools/infra-deploy.js). All three
      must be set for live smart accounts; otherwise the app runs in demo. */
   modules: {
@@ -571,8 +573,10 @@ function applyMode() {
       await connectChain();
     } catch (e) {
       DEMO = true;
-      retryable = true; // config is complete — only the RPC probe failed
-      BOOT_NOTE = 'chain unreachable at boot — retrying automatically';
+      retryable = true; // config is complete — only this step failed
+      /* Surface the REAL reason on /api/config — 'unreachable' alone hides
+         things like a malformed WIF or a wrong network. */
+      BOOT_NOTE = `chain setup failed — retrying automatically (${String(e.message || e).slice(0, 140)})`;
       console.log(`mode:     DEMO — ${e.message} (retrying every 60s)`);
     }
   } else {
