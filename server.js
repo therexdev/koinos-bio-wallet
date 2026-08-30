@@ -214,6 +214,9 @@ api.diagnose = async (params) => {
   const threshold = DEMO ? null : await chain.validationThreshold(rec.address);
   return {
     ok: true, demo: DEMO, network: CFG.network,
+    /* WHY the server is in demo, which is the thing worth knowing when it
+       shouldn't be. */
+    demoReason: DEMO ? (BOOT_NOTE || 'DEMO_MODE=1 is set') : undefined,
     /* One line worth reading on a phone; the fields below have the detail. */
     summary: diagnoseSummary(rec, chainState, threshold),
     local: { address: rec.address, step: rec.step, credentials: rec.credentials, error: rec.error },
@@ -233,7 +236,10 @@ api.diagnose = async (params) => {
 /** The report in one sentence, leading with whatever is actually wrong. */
 function diagnoseSummary(rec, chainState, threshold) {
   const at = rec.address;
-  if (DEMO) return `${at}: demo mode — no chain to inspect`;
+  if (DEMO) {
+    return `${at}: the server is in DEMO mode (${BOOT_NOTE || 'DEMO_MODE=1'}) — nothing here reaches the chain, `
+      + 'and any swap it reports as complete was simulated';
+  }
   if (chainState.contractExists === false) return `${at}: no smart-account contract at this address`;
   if (!chainState.signModuleInstalled) return `${at}: the passkey sign module is NOT installed`;
   if (!chainState.validatorInstalled) return `${at}: the validator module is NOT installed`;

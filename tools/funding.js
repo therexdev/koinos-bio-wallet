@@ -100,9 +100,47 @@ function configure(opts) {
     S.store = JSON.parse(fs.readFileSync(file(), "utf8"));
     S.store.transit ||= {}; S.store.jobs ||= {};
   } catch (_) { S.store = { transit: {}, jobs: {} }; }
+  if (!S.demo) repairSimulatedJobs();
   if (!_timer) {
     _timer = setInterval(() => { tick().catch(() => {}); }, TICK_MS);
     if (_timer.unref) _timer.unref();
+  }
+}
+
+/* Ids the simulator writes. A REAL job carrying one was walked forward by
+   the demo flow while the server was in demo mode, so its "done" is a
+   fiction and the transfer is still sitting in the bridge. */
+const SIMULATED_ID = /^0xdemo/;
+
+/** Undo a simulated finish on a real job.
+
+    The Koinos side of a bridge transfer is idempotent and permanent: the
+    guardian-signed record stays claimable until someone actually claims it.
+    So the repair is simply to stop believing the fiction and go re-read the
+    record — pollGuardians fetches it afresh and the job lands for real. */
+function repairSimulatedJobs() {
+  let repaired = 0;
+  for (const account of Object.keys(S.store.jobs || {})) {
+    const j = S.store.jobs[account];
+    if (!j || j.demo) continue;
+    const faked = SIMULATED_ID.test(String(j.redeemId || "")) || SIMULATED_ID.test(String(j.swapId || ""));
+    if (!faked) continue;
+    const back = j.ethTxHash
+      ? { status: "awaiting_signatures", sigStartedAt: Date.now() }
+      /* Nothing bridged yet: let Retry work it out from real balances. */
+      : { status: "error", failedAt: "awaiting_signatures" };
+    S.store.jobs[account] = {
+      ...j, ...back,
+      redeemId: null, swapId: null, koinReceived: null, finishedAt: null,
+      demoTicks: 0, redeemAttempts: 0, needsTap: false,
+      error: "the server was in demo mode and marked this swap complete without landing it — resuming for real",
+      repairedAt: Date.now(),
+    };
+    repaired += 1;
+  }
+  if (repaired) {
+    persist();
+    console.log(`funding:  repaired ${repaired} job(s) a demo-mode server had marked complete`);
   }
 }
 
@@ -410,6 +448,15 @@ async function tick() {
     if (BUSY.has(account)) continue;
     BUSY.add(account);
     try {
+      /* A job is simulated or it is real, and the two must never cross.
+         Advancing a REAL job with the simulator marches it to "done" and
+         writes a fake redeem id over a transfer that is still sitting in
+         the bridge — the user is told their money landed when it has not.
+         (That is not hypothetical: it happened on mainnet the first time a
+         live server came back up without its sponsor key and fell into
+         demo mode.) Running the reverse would spend real gas on invented
+         balances. So each side only ever touches its own. */
+      if (S.demo !== !!j.demo) continue;
       if (S.demo) await demoAdvance(account, j);
       else if (ETH_STATES.has(j.status)) await advanceEth(account, j);
       else if (j.status === "awaiting_signatures") await pollGuardians(account, j);

@@ -177,6 +177,10 @@ footer {
   font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
   padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(250,204,21,.55); color: #facc15;
 }
+.fund-inflight {
+  padding: 2px 9px; border-radius: 999px; color: var(--bright);
+  border: 1px solid rgba(167,139,250,.55); background: rgba(167,139,250,.12);
+}
 .stat-sample { font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; color: #facc15; vertical-align: middle; }
 .fund-asset { border-top: 1px solid var(--line); padding: 12px 0 4px; }
 .fund-asset:first-child { border-top: 0; }

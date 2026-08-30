@@ -37,6 +37,10 @@ const Fund = (() => {
 
   const needsTap = (j) => j.status === 'awaiting_redeem' && !!j.needsTap;
 
+  /* Job states where the funds sit in the bridge rather than at the deposit
+     address — nothing shows in the token balances, so say it explicitly. */
+  const IN_BRIDGE = new Set(['awaiting_signatures', 'awaiting_redeem', 'awaiting_swap']);
+
   const SYM = { eth: 'ETH', usdc: 'USDC', usdt: 'USDT' };
 
   function mount(ctx) {
@@ -204,6 +208,17 @@ const Fund = (() => {
       if (Number(b.vkoin) > 0) strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong> (in transit)</span>`);
     } else if (st.balancesError) {
       strip.push('<span>balances unavailable right now</span>');
+    }
+    /* Money that has LEFT the deposit address but not yet arrived as KOIN is
+       still yours — it is locked in the bridge against a guardian-signed
+       record. Showing nothing for it reads as "it vanished", which is the
+       one thing it has not done. */
+    const inFlight = st.job;
+    const inBridge = inFlight && IN_BRIDGE.has(inFlight.status)
+      ? (inFlight.recordAmount || inFlight.estKoinOut) : null;
+    if (inBridge) {
+      strip.push(`<span class="fund-inflight">in the bridge <strong>${koin(inBridge)} KOIN</strong>`
+        + ' — waiting to land on your account</span>');
     }
     $('#fund-balances').innerHTML = strip.join('<span class="fund-dot">·</span>');
 
