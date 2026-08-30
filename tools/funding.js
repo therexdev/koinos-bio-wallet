@@ -583,15 +583,13 @@ async function status(account) {
   const t = transitFor(account);
   if (!t) return { enabled: false };
   const j = job(account);
-  const out = { enabled: true, ethAddress: t.ethAddress, job: publicJob(j) };
-  /* Balances + quotes only while nothing is actively moving (they're for
-     the "what would I get" view; an active job shows its own numbers). */
-  if (!j || TERMINAL.has(j.status)) {
-    try {
-      out.balances = await balances(account);
-      out.quotes = await quotes(account);
-    } catch (e) { out.balancesError = String(e.message || e).slice(0, 160); }
-  }
+  const out = { enabled: true, demo: S.demo || undefined, ethAddress: t.ethAddress, job: publicJob(j) };
+  /* Balances always (so the card can show what the address holds, zeros
+     included); route quotes only while nothing is actively moving. */
+  try {
+    out.balances = await balances(account);
+    if (!j || TERMINAL.has(j.status)) out.quotes = await quotes(account);
+  } catch (e) { out.balancesError = String(e.message || e).slice(0, 160); }
   return out;
 }
 

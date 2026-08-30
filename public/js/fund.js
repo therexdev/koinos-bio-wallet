@@ -120,6 +120,22 @@ const Fund = (() => {
 
     $('#fund-eth-addr').textContent = st.ethAddress;
 
+    /* What the deposit address holds right now — zeros included, so there
+       is never a question of what's in there. Demo data says so, loudly. */
+    const b = st.balances;
+    const strip = [];
+    if (st.demo) strip.push('<span class="fund-sample">SAMPLE — demo mode</span>');
+    if (b) {
+      const f = (v, dp) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: dp });
+      strip.push(`<span>ETH <strong>${f(b.eth, 5)}</strong></span>`);
+      strip.push(`<span>USDC <strong>${f(b.usdc, 2)}</strong></span>`);
+      strip.push(`<span>USDT <strong>${f(b.usdt, 2)}</strong></span>`);
+      if (Number(b.vkoin) > 0) strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong> (in transit)</span>`);
+    } else if (st.balancesError) {
+      strip.push('<span>balances unavailable right now</span>');
+    }
+    $('#fund-balances').innerHTML = strip.join('<span class="fund-dot">·</span>');
+
     const j = st.job;
     const jobActive = j && !['done', 'error'].includes(j.status);
     $('#fund-idle').hidden = !!jobActive || (j && j.status === 'error');

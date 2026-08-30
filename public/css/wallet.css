@@ -166,3 +166,14 @@ footer {
   animation: fundspin 0.9s linear infinite;
 }
 @keyframes fundspin { to { transform: rotate(360deg); } }
+.fund-balances {
+  display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+  background: var(--inset); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; margin: 0 0 10px; font-size: .88rem; color: var(--dim);
+}
+.fund-balances strong { color: var(--bright); font-weight: 600; }
+.fund-dot { color: var(--line-strong); }
+.fund-sample {
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(250,204,21,.55); color: #facc15;
+}
