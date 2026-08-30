@@ -373,6 +373,12 @@ async function sendAsAccount(key, ops, { rcLimit = K.rcLimit } = {}) {
 }
 
 const MISSING_CONTRACT = /not exist|not found|unable to find|invalid contract|no contract/i;
+/* mod-sign-webauthn declares get_credentials read-only, but it lazily
+   assigns the caller's storage space and therefore WRITES the first time it
+   sees a user — the chain rejects that in a read context. Upstream bug; we
+   read the credential→address index instead (a plain map lookup) and treat
+   this error as "nothing registered yet". */
+const READ_ONLY_WRITE = /read only call|cannot put object/i;
 
 /** Addresses of modules installed on an account — [] for a bare contract,
     null when no contract lives at the address yet. */
@@ -392,9 +398,17 @@ async function accountCredentials(addr) {
     const { result } = await modSignContract().functions.get_credentials({ user: addr });
     return (result && result.value) || [];
   } catch (e) {
-    if (MISSING_CONTRACT.test(humanChainError(e))) return [];
+    const msg = humanChainError(e);
+    if (MISSING_CONTRACT.test(msg) || READ_ONLY_WRITE.test(msg)) return [];
     throw e;
   }
+}
+
+/** Is this credential registered to this account? Uses the credential→address
+    index, which is a plain map read (see READ_ONLY_WRITE above). */
+async function credentialRegisteredFor(address, credentialId) {
+  const owner = await credentialAddress(credentialId);
+  return owner === address;
 }
 
 /** Reverse lookup: which account does a credential belong to? */
@@ -403,7 +417,8 @@ async function credentialAddress(credentialId) {
     const { result } = await modSignContract().functions.get_address_by_credential_id({ credential_id: credentialId });
     return (result && result.value) || null;
   } catch (e) {
-    if (MISSING_CONTRACT.test(humanChainError(e))) return null;
+    const msg = humanChainError(e);
+    if (MISSING_CONTRACT.test(msg) || READ_ONLY_WRITE.test(msg)) return null;
     throw e;
   }
 }
@@ -435,8 +450,7 @@ async function bootstrapSmartAccount(key, credential) {
 
   const wantSign = !mods.includes(K.modules.modSign);
   const wantValidator = !mods.includes(K.modules.modValidation);
-  const creds = await accountCredentials(address);
-  const wantCredential = !creds.some((c) => c.credential_id === credential.credential_id);
+  const wantCredential = !(await credentialRegisteredFor(address, credential.credential_id));
 
   if (!wantSign && !wantValidator && !wantCredential) {
     return { address, uploadTx, setupTx: null, healed };
@@ -557,7 +571,7 @@ module.exports = {
   opKoinTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,
-  accountModules, accountCredentials, credentialAddress,
+  accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,
   bootstrapSmartAccount, submitSmartCosigned, sendAsAccount,
   opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
   modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,

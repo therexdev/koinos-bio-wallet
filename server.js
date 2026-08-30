@@ -362,10 +362,17 @@ async function demoCheckSmartSignature(tx, known) {
    swapped to KOIN through the better of the two Vortex routes, and the
    PASSKEY signs the Koinos-side landing (see tools/funding.js). */
 
-function fundAccount(credentialId) {
+function fundAccount(credentialId, { requireActive = true } = {}) {
   const rec = veive.status(String(credentialId || ''));
   if (!rec) throw httpError(404, 'no account for that passkey');
-  if (rec.step !== 'active') throw httpError(400, 'the account is still activating — try again in a minute');
+  /* The deposit address and its balances are useful the moment an account
+     exists — only the swap itself needs a live on-chain account. */
+  if (requireActive && rec.step !== 'active') {
+    throw httpError(409, rec.step === 'conflict'
+      ? 'this account answers to a different passkey'
+      : 'your account is still being set up on-chain — try again in a minute'
+        + (rec.error ? ` (${rec.error})` : ''));
+  }
   return rec.address;
 }
 
@@ -376,14 +383,21 @@ api.fundEnable = async (body, ip) => {
 };
 
 api.fundStatus = async (params) => {
-  const account = fundAccount(params.get('credentialId'));
-  funding.enable(account); // every account has a deposit address, automatically
-  return { ok: true, ...(await funding.status(account)) };
+  const rec = veive.status(String(params.get('credentialId') || ''));
+  if (!rec) throw httpError(404, 'no account for that passkey');
+  funding.enable(rec.address); // every account has a deposit address, automatically
+  return {
+    ok: true,
+    accountActive: rec.step === 'active',
+    accountStep: rec.step,
+    accountError: rec.error || undefined,
+    ...(await funding.status(rec.address)),
+  };
 };
 
 /** Route comparison for a user-chosen amount — the node app's quote view. */
 api.fundQuote = async (body) => {
-  const account = fundAccount(body.credentialId);
+  const account = fundAccount(body.credentialId, { requireActive: false });
   funding.enable(account);
   try {
     return { ok: true, quote: await funding.quoteFor(account, String(body.asset || ''), body.amount) };

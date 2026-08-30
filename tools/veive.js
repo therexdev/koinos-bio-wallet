@@ -186,10 +186,15 @@ async function inspect(address) {
   out.modules = mods || [];
   out.signModuleInstalled = !!mods && mods.includes(chain.K.modules.modSign);
   out.validatorInstalled = !!mods && mods.includes(chain.K.modules.modValidation);
-  const creds = await chain.accountCredentials(address).catch(() => []);
-  out.registeredCredentials = creds.map((c) => c.credential_id);
   out.localCredentials = rec ? rec.credentials.map((c) => c.id) : [];
-  out.credentialRegistered = out.localCredentials.some((id) => out.registeredCredentials.includes(id));
+  /* Check each local credential through the credential→address index — the
+     per-user credential list is not safely readable (see chain.js). */
+  const owned = [];
+  for (const id of out.localCredentials) {
+    if (await chain.credentialRegisteredFor(address, id).catch(() => false)) owned.push(id);
+  }
+  out.registeredCredentials = owned;
+  out.credentialRegistered = owned.length > 0;
   out.ready = !!(out.contractExists && out.signModuleInstalled && out.validatorInstalled && out.credentialRegistered);
   return out;
 }

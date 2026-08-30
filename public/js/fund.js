@@ -71,7 +71,10 @@ const Fund = (() => {
     try {
       LAST = await CTX.api('/api/fund/status?credentialId=' + encodeURIComponent(CTX.credentialId()));
       render(LAST);
-    } catch (_) { /* card keeps its last state */ }
+    } catch (e) {
+      /* Never fail silently — a dead-looking button is worse than a reason. */
+      if (e.status !== 404) say(e.message || 'Funding is unavailable right now', 'err');
+    }
     const active = LAST && LAST.job && !['done', 'error'].includes(LAST.job.status);
     TIMER = setTimeout(refresh, active ? 4000 : 15000);
   }
@@ -200,6 +203,16 @@ const Fund = (() => {
     }
     $('#fund-balances').innerHTML = strip.join('<span class="fund-dot">·</span>');
 
+    /* Swaps need a live on-chain account; the address and balances don't. */
+    if (st.accountActive === false) {
+      say(st.accountStep === 'conflict'
+        ? 'This account answers to a different passkey — sign in with that one.'
+        : 'Your smart account is still being written on-chain — swaps unlock once it is live.'
+          + (st.accountError ? ' (' + st.accountError + ')' : ''), '');
+    } else if ($('#fund-status').textContent.startsWith('Your smart account is still')) {
+      say('');
+    }
+
     const j = st.job;
     const jobActive = j && !['done', 'error'].includes(j.status);
     $('#fund-idle').hidden = !!jobActive || (j && j.status === 'error');
@@ -208,7 +221,7 @@ const Fund = (() => {
     /* per-asset amount + route panels (only rebuilt when idle, so typing
        is never clobbered by the poll) */
     const assets = $('#fund-assets');
-    if (!jobActive && b && st.spendable) {
+    if (!jobActive && b && st.spendable && st.accountActive !== false) {
       const lowGas = !st.gasFronting && Number(b.eth) < Number(st.gasMinEth || 0.0012);
       const panels = [];
       for (const asset of ['eth', 'usdc', 'usdt']) {
