@@ -376,9 +376,11 @@ api.submit = async (body) => {
     if (known.fundingTap) funding.onTapDone(known.fundingTap.account, known.fundingTap.step, known.txId);
     return { ok: true, demo: true, txid: known.txId, explorer: null, smart };
   }
-  const txid = known.smart
-    ? await chain.submitSmartCosigned(body.transaction, known.txId, known.address, veive.credentialsFor(known.address))
-    : await chain.submitCosigned(body.transaction, known.txId, known.address);
+  const txid = known.selfPaid
+    ? await chain.submitSelfPaid(body.transaction, known.txId, known.address, veive.credentialsFor(known.address))
+    : known.smart
+      ? await chain.submitSmartCosigned(body.transaction, known.txId, known.address, veive.credentialsFor(known.address))
+      : await chain.submitCosigned(body.transaction, known.txId, known.address);
   /* The register landed on-chain — mirror it into the store so sign-in and
      the submit allowlist recognize the new credential immediately. */
   const smart = known.register ? veive.addCredential(known.address, known.register) : undefined;
@@ -493,11 +495,30 @@ api.fundPrepareStep = async (body) => {
   }
   const sponsorMana = await chain.mana(chain.sponsorAddress());
   if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
-  /* Public RPCs occasionally answer with an HTML error page; building is
-     read-only and idempotent, so ride it out rather than failing the tap. */
-  const tx = await chain.withRpcRetry(() => chain.prepareUserTx(account, tap.ops, { rcLimit: tap.rcLimit }));
-  const ref = rememberPrepared(tx.id, account, { smart: true, fundingTap: { account, step: tap.step } });
-  return { ok: true, ref, tx, step: tap.step };
+
+  /* Who pays? The sponsor normally does — but that means the sponsor must
+     co-sign, and a validator at threshold 0 rejects any transaction where
+     not every signature is a passkey signature. There, the account pays for
+     itself so the passkey is the ONLY signature; the sponsor covers the
+     mana as a KOIN top-up instead, which needs no authority from the
+     account. Same mana sharing, different plumbing. */
+  const thr = await chain.validationThreshold(account);
+  const selfPaid = thr.value === 0;
+  let tx, topUp;
+  if (selfPaid) {
+    try { topUp = await chain.ensureManaFor(account, tap.rcLimit); }
+    catch (e) { throw httpError(503, chain.humanChainError(e)); }
+    if (topUp.regenerating) {
+      throw httpError(503, 'your account is still regenerating the mana for this step — try again in a few minutes');
+    }
+    tx = await chain.withRpcRetry(() => chain.prepareSelfPaidTx(account, tap.ops, { rcLimit: tap.rcLimit }));
+  } else {
+    /* Public RPCs occasionally answer with an HTML error page; building is
+       read-only and idempotent, so ride it out rather than failing the tap. */
+    tx = await chain.withRpcRetry(() => chain.prepareUserTx(account, tap.ops, { rcLimit: tap.rcLimit }));
+  }
+  const ref = rememberPrepared(tx.id, account, { smart: true, selfPaid, fundingTap: { account, step: tap.step } });
+  return { ok: true, ref, tx, step: tap.step, selfPaid, toppedUp: topUp && topUp.toppedUp || undefined };
 };
 
 api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });

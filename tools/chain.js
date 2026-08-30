@@ -624,16 +624,14 @@ async function validationThreshold(address) {
   }
 }
 
-async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
-  if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
-  const recomputed = Transaction.computeTransactionId(signedTx.header);
-  if (recomputed !== preparedId) throw new Error('transaction header was altered');
-  const sigs = Array.isArray(signedTx.signatures) ? signedTx.signatures : [];
-  if (sigs.length !== 1) throw new Error('expected exactly the passkey signature');
-
+/** Everything about a passkey blob we can check WITHOUT the chain: the
+    WebAuthn prefix and protobuf shape, that the credential is one we expect,
+    and that its challenge commits to THIS transaction. Cheap, and it catches
+    a client bug before any mana is spent. Throws with the reason. */
+async function checkPasskeyBlob(sigB64u, preparedId, expectedCredentialIds) {
   let auth;
   try {
-    const blob = utils.decodeBase64url(sigs[0]);
+    const blob = utils.decodeBase64url(sigB64u);
     if (!(blob.length > 2 && blob[0] === 0xff && blob[1] === 0x02)) throw new Error('missing WebAuthn prefix');
     auth = await modSignSerializer().deserialize(blob.subarray(2), 'authentication_data');
   } catch (e) {
@@ -643,17 +641,101 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
       !expectedCredentialIds.includes(auth.credential_id)) {
     throw new Error('signed by an unrecognized passkey');
   }
-  /* Cheap pre-flight of the challenge rule — catches a client bug before
-     burning sponsor mana on a doomed broadcast. */
-  try {
-    const clientData = JSON.parse(Buffer.from(utils.decodeBase64url(auth.client_data)).toString('utf8'));
-    const expected = utils.encodeBase64url(Buffer.from(preparedId, 'utf8')).replace(/=+$/, '');
-    if (String(clientData.challenge || '').replace(/=+$/, '') !== expected) {
-      throw new Error('challenge does not commit to this transaction');
-    }
-  } catch (e) {
-    throw new Error(`passkey signature rejected: ${e.message}`);
+  const clientData = JSON.parse(Buffer.from(utils.decodeBase64url(auth.client_data)).toString('utf8'));
+  const expected = utils.encodeBase64url(Buffer.from(preparedId, 'utf8')).replace(/=+$/, '');
+  if (String(clientData.challenge || '').replace(/=+$/, '') !== expected) {
+    throw new Error('challenge does not commit to this transaction');
   }
+  return auth;
+}
+
+/** Build a transaction the ACCOUNT pays for itself.
+
+    The sponsor-as-payer design needs the sponsor's signature alongside the
+    passkey's, and ModValidationSignature at threshold 0 rejects any
+    transaction where not every signature is a passkey signature — so the
+    co-signature is fatal there no matter how good the passkey is. With the
+    account as its own payer there is exactly ONE signature on the wire, the
+    passkey's, which satisfies BOTH threshold settings. It also keeps the
+    chain's authority check inside the account's own authorize(), so nothing
+    ever reaches the plain-signature loop that asserts on 65 bytes.
+
+    The price is mana: the account must hold enough KOIN itself. */
+async function prepareSelfPaidTx(accountAddr, ops, { rcLimit = K.rcLimit } = {}) {
+  const tx = new Transaction({
+    provider: provider(),
+    options: { payer: accountAddr, rcLimit },   // payer == payee: one check, one signature
+  });
+  for (const op of ops) await tx.pushOperation(op);
+  await tx.prepare({ chainId: await chainId() });
+  return tx.transaction;
+}
+
+/** Broadcast a self-paid transaction: the passkey blob is the ONLY
+    signature — the sponsor deliberately does not co-sign. */
+async function submitSelfPaid(signedTx, preparedId, accountAddr, expectedCredentialIds) {
+  if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
+  if (Transaction.computeTransactionId(signedTx.header) !== preparedId) throw new Error('transaction header was altered');
+  const sigs = (signedTx.signatures || []).slice();
+  if (sigs.length !== 1) throw new Error('expected exactly the passkey signature');
+  await checkPasskeyBlob(sigs[0], preparedId, expectedCredentialIds);
+
+  const pre = await verifyPasskeyOnChain(accountAddr, sigs[0], preparedId);
+  if (pre.ok === false) {
+    throw new Error(`the chain rejected your passkey signature: ${pre.logs.length ? pre.logs.join(' | ') : 'the sign module rejected it'}`);
+  }
+  const clean = { id: signedTx.id, header: signedTx.header, operations: signedTx.operations, signatures: sigs };
+  return queueTx(async () => {
+    const tx = new Transaction({ provider: provider() });
+    tx.transaction = clean;
+    try { await sendTolerant(tx); }
+    catch (e) {
+      const verdict = pre.ok === true ? 'accepted' : pre.error ? `unreadable: ${pre.error}` : 'no verdict';
+      throw new Error(`${explainSigLength(humanChainError(e))} [self-paid; sign module: ${verdict}`
+        + `${pre.logs && pre.logs.length ? '; ' + pre.logs.join(' | ') : ''}] (payer ${clean.header.payer})`);
+    }
+    try { await waitMined(clean.id); }
+    catch (e) {
+      const err = new Error(`transaction ${clean.id} not confirmed: ${humanChainError(e)}`);
+      err.txId = clean.id; err.broadcast = true;
+      throw err;
+    }
+    return clean.id;
+  });
+}
+
+/** Make sure the account can pay `rcLimit` of mana itself, topping it up
+    from the sponsor if not. Mana tracks the KOIN balance, so the top-up is
+    an ordinary sponsor-authorized transfer — it needs no authority from the
+    account, which is the point: it works before the account can sign
+    anything. Returns what it did. */
+async function ensureManaFor(accountAddr, rcLimitSats) {
+  const need = BigInt(rcLimitSats);
+  const have = BigInt(Math.floor(await mana(accountAddr) * 1e8));
+  if (have >= need) return { toppedUp: false, manaSats: have.toString() };
+  const balance = BigInt(await koinBalanceSats(accountAddr));
+  /* Mana regenerates toward the balance, so the balance is the ceiling. */
+  const short = need > balance ? need - balance : 0n;
+  if (short <= 0n) {
+    /* Balance is there but mana has not regenerated yet — waiting is the
+       only cure, and topping up more KOIN does not speed it. */
+    return { toppedUp: false, manaSats: have.toString(), regenerating: true };
+  }
+  const sponsorKoin = BigInt(await koinBalanceSats(sponsorAddress()));
+  if (sponsorKoin < short) throw new Error('the sponsor wallet is out of KOIN to cover this account\'s network fee');
+  const op = await opKoinTransfer(sponsorAddress(), accountAddr, short.toString());
+  const txId = await sendAsSponsorFor(null, [op], { rcLimit: K.rcLimit });
+  return { toppedUp: true, topUpSats: short.toString(), txId };
+}
+
+async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
+  if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
+  const recomputed = Transaction.computeTransactionId(signedTx.header);
+  if (recomputed !== preparedId) throw new Error('transaction header was altered');
+  const sigs = Array.isArray(signedTx.signatures) ? signedTx.signatures : [];
+  if (sigs.length !== 1) throw new Error('expected exactly the passkey signature');
+
+  await checkPasskeyBlob(sigs[0], preparedId, expectedCredentialIds);
 
   /* Ask the chain itself before burning mana — and surface its reason. */
   const pre = await verifyPasskeyOnChain(accountAddr, sigs[0], preparedId);
@@ -738,6 +820,7 @@ module.exports = {
   accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,
   bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor,
   verifyPasskeyOnChain, validationThreshold,
+  prepareSelfPaidTx, submitSelfPaid, ensureManaFor,
   opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
   modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,
 };

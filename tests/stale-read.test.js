@@ -30,7 +30,11 @@ const SWAP_MOD = require.resolve("../tools/eth/eth-swap-exec");
 require(BRIDGE_MOD); require(SWAP_MOD);
 
 let RECEIPT = null;
-const PROVIDER = { getTransactionReceipt: async () => RECEIPT };
+let FEE = { maxFeePerGas: null, gasPrice: null };
+const PROVIDER = {
+  getTransactionReceipt: async () => RECEIPT,
+  getFeeData: async () => FEE,
+};
 require.cache[BRIDGE_MOD].exports = {
   ...require.cache[BRIDGE_MOD].exports,
   makeProvider: async () => PROVIDER,
@@ -168,6 +172,36 @@ function parked(job) {
     assert.strictEqual(out.usdtSats, String(USDT_IN),
       "a later deposit at the same address is not silently pulled into this job");
     console.log("✓ reconcile caps at the amount the user actually asked to swap");
+  }
+
+  /* --- 8. the gas reserve is priced from the live fee, not a flat number.
+     A fixed 0.0024 ETH reserve left 0.00006 ETH of a 0.00246 balance
+     spendable — 2% of the money held back for gas costing a fraction of
+     that. --- */
+  {
+    parked({ status: "done" });
+    const bal = {
+      ethWei: ethers.parseEther("0.00246").toString(), eth: "0.00246",
+      usdcSats: "0", usdtSats: "0", vkoinSats: "0",
+    };
+    FEE = { maxFeePerGas: ethers.parseUnits("1", "gwei"), gasPrice: null };
+    let sp = await funding._spendableOf("eth", bal);
+    let reserved = ethers.parseEther("0.00246") - sp.sats;
+    assert.ok(reserved < ethers.parseEther("0.0015"),
+      `at 1 gwei the reserve must be a small slice, held back ${ethers.formatEther(reserved)}`);
+    assert.ok(sp.sats > ethers.parseEther("0.001"),
+      `most of the balance must stay spendable, got ${sp.label}`);
+
+    /* When gas is genuinely expensive, it reserves more — that is the point. */
+    FEE = { maxFeePerGas: ethers.parseUnits("40", "gwei"), gasPrice: null };
+    const pricey = await funding._spendableOf("eth", bal);
+    assert.ok(pricey.sats < sp.sats, "a higher fee must hold back more, not the same flat amount");
+
+    /* And an unreadable fee falls back rather than letting a job strand. */
+    FEE = { maxFeePerGas: null, gasPrice: null };
+    const fallback = await funding._spendableOf("eth", bal);
+    assert.ok(fallback.sats >= 0n, "an unreadable fee must not throw");
+    console.log("✓ gas reserve tracks the live fee (cheap gas no longer eats the deposit)");
   }
 
   console.log("\nALL STALE-READ CHECKS PASSED");

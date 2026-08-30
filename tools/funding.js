@@ -202,11 +202,35 @@ async function balances(account) {
   return out;
 }
 
+/* Gas a route actually burns on Ethereum, in units, measured against the
+   builders in tools/eth. Route C from an ETH deposit is the long one:
+   swap ETH→USDT, approve Permit2, approve the router, swap USDT→vKOIN,
+   approve the bridge, transfer to the bridge. */
+const ROUTE_GAS_UNITS = 900000n;
+
+/** What to hold back for gas, priced from the CURRENT fee — not a fixed
+    amount. A flat reserve is wrong in both directions: it strands a job
+    when gas spikes, and when gas is cheap it quietly swallows most of a
+    small deposit (a 0.0024 ETH reserve left 0.00006 of a 0.00246 balance
+    spendable — 2% of the money, for gas that costs a fraction of that). */
+async function gasReserveWei() {
+  const floor = ethers.parseEther(S.gasMinEth || "0") / 4n;
+  try {
+    const fee = await (await ethProvider()).getFeeData();
+    const perGas = fee.maxFeePerGas ?? fee.gasPrice ?? 0n;
+    if (perGas > 0n) {
+      const est = (perGas * ROUTE_GAS_UNITS * 15n) / 10n; // 50% headroom
+      return est > floor ? est : floor;
+    }
+  } catch (_) { /* fee read failed — fall back to the configured floor */ }
+  return ethers.parseEther(S.gasMinEth || "0.0012") * 2n;
+}
+
 /** How much of an asset a swap may actually spend right now: the balance,
-    minus a gas reserve for ETH, clamped to the safety cap. */
-function spendableOf(asset, bal) {
+    minus a live gas reserve for ETH, clamped to the safety cap. */
+async function spendableOf(asset, bal) {
   if (asset === "eth") {
-    const gasReserve = ethers.parseEther(S.gasMinEth) * 2n;
+    const gasReserve = S.demo ? ethers.parseEther("0.0005") : await gasReserveWei();
     let wei = BigInt(bal.ethWei) > gasReserve ? BigInt(bal.ethWei) - gasReserve : 0n;
     const cap = ethers.parseEther(S.maxEth);
     if (wei > cap) wei = cap;
@@ -231,7 +255,7 @@ function parseAmount(asset, amount) {
 async function quoteFor(account, asset, amount) {
   const bal = await balances(account);
   if (!bal) throw new Error("Funding is not enabled for this account");
-  const spendable = spendableOf(asset, bal);
+  const spendable = await spendableOf(asset, bal);
   const amt = parseAmount(asset, amount);
   if (amt > spendable.sats) {
     throw new Error(`Max right now is ${spendable.label} ${asset.toUpperCase()}` +
@@ -273,7 +297,7 @@ async function quotes(account) {
   if (!bal) return null;
   const out = {};
   for (const asset of ["eth", "usdc", "usdt"]) {
-    const sp = spendableOf(asset, bal);
+    const sp = await spendableOf(asset, bal);
     if (sp.sats <= 0n) continue;
     try { out[asset] = await quoteFor(account, asset, sp.label); }
     catch (e) { out[asset] = { asset, amount: sp.label, best: null, routes: [], error: String(e.message || e) }; }
@@ -306,7 +330,7 @@ async function start(account, { asset, amount, route } = {}) {
   if (!["eth", "usdc", "usdt"].includes(asset)) throw new Error("asset must be eth, usdc or usdt");
 
   const bal = await balances(account);
-  const spendable = spendableOf(asset, bal);
+  const spendable = await spendableOf(asset, bal);
   if (spendable.sats <= 0n) {
     throw new Error(asset === "eth"
       ? `Deposit at least ${S.gasMinEth} ETH more — the balance must cover the swap plus gas`
@@ -881,9 +905,9 @@ async function status(account) {
     out.balances = await balances(account);
     if (out.balances) {
       out.spendable = {
-        eth: spendableOf("eth", out.balances).label,
-        usdc: spendableOf("usdc", out.balances).label,
-        usdt: spendableOf("usdt", out.balances).label,
+        eth: (await spendableOf("eth", out.balances)).label,
+        usdc: (await spendableOf("usdc", out.balances)).label,
+        usdt: (await spendableOf("usdt", out.balances)).label,
       };
     }
     if (!j || TERMINAL.has(j.status)) out.quotes = await quotes(account);
@@ -896,4 +920,6 @@ module.exports = {
   prepareTapOps, onTapDone, transitFor, job, publicJob,
   /* the driver, exposed so tests can step it without waiting on the timer */
   tick,
+  /* the gas-reserve maths, exposed so a test can price it at a known fee */
+  _spendableOf: spendableOf,
 };

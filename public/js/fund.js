@@ -195,6 +195,15 @@ const Fund = (() => {
       const tag = st.demo ? ' <span class="stat-sample">sample</span>' : '';
       $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
       $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
+      /* Funds mid-bridge belong on the wallet screen too — they are the
+         user's, they are just not at the deposit address any more. */
+      const j0 = st.job;
+      const held = j0 && IN_BRIDGE.has(j0.status) ? (j0.recordAmount || j0.estKoinOut) : null;
+      const card = $('#stat-bridge-card');
+      if (card) {
+        card.hidden = !held;
+        if (held) $('#stat-bridge').innerHTML = `${koin(held)} KOIN` + tag;
+      }
     }
 
     /* the in-card strip mirrors the same numbers */
@@ -205,7 +214,9 @@ const Fund = (() => {
       strip.push(`<span>ETH <strong>${f(b.eth, 5)}</strong></span>`);
       strip.push(`<span>USDC <strong>${f(b.usdc, 2)}</strong></span>`);
       strip.push(`<span>USDT <strong>${f(b.usdt, 2)}</strong></span>`);
-      if (Number(b.vkoin) > 0) strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong> (in transit)</span>`);
+      /* Always shown, zero included. Hiding it when it hits 0 is how a
+         correct bridging step reads as "my money disappeared". */
+      strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong></span>`);
     } else if (st.balancesError) {
       strip.push('<span>balances unavailable right now</span>');
     }
