@@ -519,6 +519,13 @@ async function prepareTapOps(account) {
   if (!j) throw new Error("No swap in progress");
   if (j.status === "awaiting_redeem") {
     if (S.demo) return { step: "redeem", ops: null, rcLimit: DEFAULT_REDEEM_RC };
+    /* Guardian signatures live ~60 minutes. If they lapsed while waiting for
+       the tap, flip back to polling — that path requests fresh signatures. */
+    const exp = j.record && Number(j.record.expiration);
+    if (exp && exp <= Date.now()) {
+      saveJob(account, { ...j, status: "awaiting_signatures", sigStartedAt: Date.now() });
+      throw new Error("The bridge signatures expired while waiting — requesting fresh ones; try again in ~2 minutes");
+    }
     const ops = [await opCompleteTransfer({ record: j.record, network: S.network, provider: chain.provider() })];
     return { step: "redeem", ops, rcLimit: DEFAULT_REDEEM_RC };
   }

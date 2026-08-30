@@ -144,6 +144,21 @@ function humanChainError(e) {
 
 const TRANSIENT_SEND = /request timeout|timed? ?out|unexpected token|invalid json|fetch|network|econn|socket|hang up|abort|bad gateway|gateway time|service unavailable|too many request|(^|[^0-9])(429|500|502|503|504)([^0-9]|$)/i;
 
+/** Retry a read/build-only chain call through transient RPC noise (an HTML
+    error page, a timeout, a 5xx). Only for idempotent work — never sends. */
+async function withRpcRetry(fn, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1200 * i));
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      if (!TRANSIENT_SEND.test(humanChainError(e))) throw e;
+    }
+  }
+  throw lastErr;
+}
+
 async function sendTolerant(tx) {
   try { await tx.send(); }
   catch (e) {
@@ -538,7 +553,7 @@ module.exports = {
   configure, net, enabled, K,
   provider, sponsor, sponsorAddress, isAddr, chainId,
   koinBalance, koinBalanceSats, mana, headInfo,
-  humanChainError, waitMined,
+  humanChainError, waitMined, withRpcRetry,
   opKoinTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,

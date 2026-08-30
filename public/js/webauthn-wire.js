@@ -155,7 +155,10 @@
   }
 
   /** The full transaction signature entry: base64url(0xFF 0x02 ‖ authentication_data).
-      `signature` here is the assertion's raw DER — normalized inside. */
+      `signature` here is the assertion's raw DER — normalized inside.
+      PADDED base64url: the Koinos node's JSON codec refuses unpadded input
+      ("Unable to translate request") — every koilib-encoded field is padded,
+      and this is the one field that bypasses koilib's encoder. */
   function packSignatureBlob(a) {
     const body = packAuthenticationData({
       credentialId: a.credentialId,
@@ -166,7 +169,8 @@
     const out = new Uint8Array(2 + body.length);
     out[0] = 0xff; out[1] = 0x02;
     out.set(body, 2);
-    return encodeB64u(out);
+    const s = encodeB64u(out);
+    return s + '='.repeat((4 - (s.length % 4)) % 4);
   }
 
   /** The WebAuthn challenge for a Koinos transaction: ASCII of its "0x…" id. */

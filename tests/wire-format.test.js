@@ -78,7 +78,11 @@ function contractExtractSignature(sig) {
   const rsOurs = contractExtractSignature(utils.decodeBase64url(ourParts.signature));
   assert.strictEqual(rsOurs.toString('hex'), rsTheirs.toString('hex'),
     'contract must extract identical r‖s from the normalized DER');
-  console.log('✓ packSignatureBlob: 0xFF02 prefix + protobuf verified; normalized DER parses to identical r‖s on-chain');
+  /* The node's JSON codec REQUIRES padded base64url in transaction.signatures
+     — an unpadded entry is rejected with "Unable to translate request". */
+  assert.strictEqual(ourEntry.length % 4, 0, 'signature entry must be padded base64url');
+  assert.strictEqual(utils.encodeBase64url(ourBlob), ourEntry, 'entry must match koilib\'s padded encoding exactly');
+  console.log('✓ packSignatureBlob: 0xFF02 prefix + protobuf verified; normalized DER parses to identical r‖s on-chain; node-safe PADDED base64url');
   // And when the DER is already in reference shape, byte-equality of the whole entry:
   assert.strictEqual(
     Wire.encodeB64u(prefixed), expectedEntry,

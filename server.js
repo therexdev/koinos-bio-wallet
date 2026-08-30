@@ -390,8 +390,8 @@ api.fundReset = async (body) => {
 api.fundPrepareStep = async (body) => {
   const account = fundAccount(body.credentialId);
   let tap;
-  try { tap = await funding.prepareTapOps(account); }
-  catch (e) { throw httpError(400, e.message); }
+  try { tap = await chain.withRpcRetry(() => funding.prepareTapOps(account)); }
+  catch (e) { throw httpError(400, chain.humanChainError(e)); }
   if (DEMO) {
     const id = demoTxid();
     const ref = rememberPrepared(id, account, { demo: true, smart: true, fundingTap: { account, step: tap.step } });
@@ -399,7 +399,9 @@ api.fundPrepareStep = async (body) => {
   }
   const sponsorMana = await chain.mana(chain.sponsorAddress());
   if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
-  const tx = await chain.prepareUserTx(account, tap.ops, { rcLimit: tap.rcLimit });
+  /* Public RPCs occasionally answer with an HTML error page; building is
+     read-only and idempotent, so ride it out rather than failing the tap. */
+  const tx = await chain.withRpcRetry(() => chain.prepareUserTx(account, tap.ops, { rcLimit: tap.rcLimit }));
   const ref = rememberPrepared(tx.id, account, { smart: true, fundingTap: { account, step: tap.step } });
   return { ok: true, ref, tx, step: tap.step };
 };
