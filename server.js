@@ -350,14 +350,25 @@ api.fundEnable = async (body, ip) => {
 
 api.fundStatus = async (params) => {
   const account = fundAccount(params.get('credentialId'));
+  funding.enable(account); // every account has a deposit address, automatically
   return { ok: true, ...(await funding.status(account)) };
+};
+
+/** Route comparison for a user-chosen amount — the node app's quote view. */
+api.fundQuote = async (body) => {
+  const account = fundAccount(body.credentialId);
+  funding.enable(account);
+  try {
+    return { ok: true, quote: await funding.quoteFor(account, String(body.asset || ''), body.amount) };
+  } catch (e) { throw httpError(400, e.message); }
 };
 
 api.fundStart = async (body, ip) => {
   const account = fundAccount(body.credentialId);
   if (rateLimited('fund-start:addr:' + account, 8, 24 * 3600000)) throw httpError(429, 'that account started several swaps today — come back tomorrow');
-  try { return { ok: true, job: await funding.start(account, { asset: String(body.asset || '') }) }; }
-  catch (e) { throw httpError(400, e.message); }
+  try {
+    return { ok: true, job: await funding.start(account, { asset: String(body.asset || ''), amount: body.amount, route: body.route }) };
+  } catch (e) { throw httpError(400, e.message); }
 };
 
 api.fundResume = async (body) => {
@@ -485,6 +496,7 @@ const POST_ROUTES = {
   '/api/prepare': api.prepare, '/api/prepare-register': api.prepareRegister,
   '/api/submit': api.submit,
   '/api/fund/enable': api.fundEnable, '/api/fund/start': api.fundStart,
+  '/api/fund/quote': api.fundQuote,
   '/api/fund/prepare-step': api.fundPrepareStep,
   '/api/fund/resume': api.fundResume, '/api/fund/reset': api.fundReset,
 };

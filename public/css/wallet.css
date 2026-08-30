@@ -177,3 +177,28 @@ footer {
   font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
   padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(250,204,21,.55); color: #facc15;
 }
+.stat-sample { font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; color: #facc15; vertical-align: middle; }
+.fund-asset { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+.fund-asset:first-child { border-top: 0; }
+.fund-asset-head { font-weight: 600; font-size: .95rem; margin-bottom: 6px; }
+.fund-amt-label { display: block; font-size: .78rem; color: var(--dim); margin-bottom: 4px; }
+.fund-amount-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.fund-amount-row input {
+  flex: 1; min-width: 0; background: var(--inset); color: inherit; font: inherit;
+  border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px;
+}
+.fund-amount-row input:focus { outline: none; border-color: var(--accent); }
+.fund-amount-row .ghost { padding: 8px 14px; }
+.fund-route { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0 0 8px; }
+.fund-route.is-best { border-color: rgba(74,222,128,.45); }
+.fund-route-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.fund-steps { color: var(--dim); font-size: .8rem; margin: 4px 0; }
+.fund-out { font-size: .95rem; }
+.fund-best { color: var(--good); font-weight: 600; }
+.fund-worse { color: var(--dim); font-size: .82rem; }
+.fund-min { color: var(--dim); font-size: .8rem; }
+.fund-unavail { color: var(--bad); font-size: .85rem; margin-top: 4px; }
+.fund-gaswarn {
+  border: 1px solid rgba(250,204,21,.5); border-radius: 10px; padding: 9px 12px;
+  font-size: .84rem; color: #facc15; margin: 2px 0 8px;
+}

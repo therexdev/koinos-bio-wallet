@@ -120,6 +120,8 @@ function createOrResume({ credentialId, publicKey, name }) {
   S.store.accounts[rec.address] = rec;
   S.store.byCredential[credentialId] = rec.address;
   persist();
+  /* Every account is born with its Ethereum deposit address too. */
+  try { require('./funding').enable(rec.address); } catch (_) {}
   if (!S.demo) runBootstrap(rec);
   return publicView(rec);
 }

@@ -82,6 +82,18 @@
       </div>
     </div>
 
+    <div class="row" id="deposit-stats" hidden>
+      <div class="card stat">
+        <div class="k">ETH · deposit address</div>
+        <div class="v" id="stat-eth">…</div>
+      </div>
+      <div class="card stat">
+        <div class="k">USDC / USDT · deposit</div>
+        <div class="v" id="stat-stable">…</div>
+        <div class="hint">Swappable to KOIN below.</div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="k">Send <span id="sym2">KOIN</span> <span class="free-chip">free — mana shared</span></div>
       <label>To address<input type="text" id="send-to" placeholder="1…" autocomplete="off" spellcheck="false"></label>
@@ -105,7 +117,7 @@
           held by the app's funding key only until they land as KOIN on your smart account, so keep amounts modest.</p>
         <div class="fund-balances" id="fund-balances"></div>
         <div id="fund-idle">
-          <div id="fund-swaps"></div>
+          <div id="fund-assets"></div>
           <p class="hint" id="fund-empty" style="margin:2px 0 6px">Waiting for a deposit… balances appear here
             within a minute of confirming on Ethereum.</p>
         </div>

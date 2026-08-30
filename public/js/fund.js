@@ -1,19 +1,21 @@
 /* Fund with ETH / USDC / USDT — the wallet face of the two-route
-   ETH→KOIN pipeline. The server drives the Ethereum legs from the
-   account's transit deposit address; this card shows the address, live
-   balances and route quotes, runs the one-click swap, and prompts the
-   PASSKEY when the KOIN is ready to land (the chain verifies that
-   signature — the server can't land funds on its own). */
+   ETH→KOIN pipeline, mirroring Koinos Node Desktop's Fund view: pick an
+   amount, see BOTH routes priced with the best on top, choose one, and
+   confirm the KOIN landing with your passkey (the chain verifies that
+   signature — the server can't land funds on its own). Every account has
+   its deposit address from birth. */
 'use strict';
 
 const Fund = (() => {
-  let CTX = null;   // { api, signPrepared, credentialId(), active() }
+  let CTX = null;   // { api, signPrepared, credentialId(), onKoinMoved }
   let TIMER = null;
   let LAST = null;
   let BUSY = false;
+  const DEBOUNCE = {};
 
   const $ = (s) => document.querySelector(s);
   const koin = (sats) => (Number(BigInt(sats)) / 1e8).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const STEP_LABEL = {
     front_gas: 'Fronting a little ETH for gas (on us)…',
@@ -31,20 +33,37 @@ const Fund = (() => {
     awaiting_swap: 'vETH arrived — one more tap swaps it to KOIN.',
   };
 
+  const SYM = { eth: 'ETH', usdc: 'USDC', usdt: 'USDT' };
+
   function mount(ctx) {
     CTX = ctx;
-    $('#btn-fund-enable').addEventListener('click', enable);
+    $('#btn-fund-enable').addEventListener('click', refresh);
     $('#fund-eth-addr').addEventListener('click', copyAddr);
     $('#btn-fund-land').addEventListener('click', land);
     $('#btn-fund-retry').addEventListener('click', () => act('/api/fund/resume'));
     $('#btn-fund-reset').addEventListener('click', () => act('/api/fund/reset'));
-    $('#fund-swaps').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-asset]');
-      if (b) startSwap(b.dataset.asset, b);
+    const assets = $('#fund-assets');
+    assets.addEventListener('click', (e) => {
+      const max = e.target.closest('button[data-max]');
+      if (max) {
+        const panel = max.closest('.fund-asset');
+        panel.querySelector('input[data-amt]').value = panel.dataset.spendable;
+        requote(panel.dataset.asset);
+        return;
+      }
+      const go = e.target.closest('button[data-route]');
+      if (go) {
+        const panel = go.closest('.fund-asset');
+        startSwap(panel.dataset.asset, panel.querySelector('input[data-amt]').value.trim(), go.dataset.route, go);
+      }
+    });
+    assets.addEventListener('input', (e) => {
+      const inp = e.target.closest('input[data-amt]');
+      if (inp) requote(inp.closest('.fund-asset').dataset.asset);
     });
     refresh();
   }
-  function stop() { if (TIMER) { clearTimeout(TIMER) ; TIMER = null; } }
+  function stop() { if (TIMER) { clearTimeout(TIMER); TIMER = null; } }
 
   async function refresh() {
     stop();
@@ -59,16 +78,6 @@ const Fund = (() => {
 
   const say = (m, cls) => { const st = $('#fund-status'); st.hidden = !m; st.className = 'status' + (cls ? ' ' + cls : ''); st.textContent = m || ''; };
 
-  async function enable() {
-    const btn = $('#btn-fund-enable');
-    btn.disabled = true;
-    try {
-      await CTX.api('/api/fund/enable', { credentialId: CTX.credentialId() });
-      await refresh();
-    } catch (e) { say(e.message || 'Could not set up funding', 'err'); }
-    finally { btn.disabled = false; }
-  }
-
   async function copyAddr() {
     const a = (LAST && LAST.ethAddress) || '';
     try { await navigator.clipboard.writeText(a); $('#fund-eth-addr').style.borderColor = 'var(--good)'; }
@@ -81,16 +90,62 @@ const Fund = (() => {
     catch (e) { say(e.message || 'Failed', 'err'); }
   }
 
-  async function startSwap(asset, btn) {
+  /* Re-price the routes for the amount in the box (debounced). */
+  function requote(asset) {
+    clearTimeout(DEBOUNCE[asset]);
+    DEBOUNCE[asset] = setTimeout(async () => {
+      const panel = document.querySelector(`.fund-asset[data-asset="${asset}"]`);
+      if (!panel) return;
+      const amount = panel.querySelector('input[data-amt]').value.trim();
+      const box = panel.querySelector('[data-routes]');
+      if (!amount || !/^\d*\.?\d*$/.test(amount) || !(Number(amount) > 0)) {
+        box.innerHTML = '<div class="hint">Enter an amount to price the routes.</div>';
+        return;
+      }
+      box.innerHTML = '<div class="hint">Pricing routes…</div>';
+      try {
+        const r = await CTX.api('/api/fund/quote', { credentialId: CTX.credentialId(), asset, amount });
+        box.innerHTML = routesHtml(asset, r.quote);
+      } catch (e) {
+        box.innerHTML = '<div class="fund-unavail">' + esc(e.message || 'Quote failed') + '</div>';
+      }
+    }, 450);
+  }
+
+  function routesHtml(asset, q) {
+    if (!q || !Array.isArray(q.routes) || !q.routes.length) {
+      return '<div class="fund-unavail">' + esc((q && q.error) || 'No route can be priced right now') + '</div>';
+    }
+    const single = q.routes.length === 1;
+    return q.routes.map((r) => {
+      const head = `<strong>Route ${esc(r.id)}</strong> — ${esc(r.label)}`;
+      const steps = `<div class="fund-steps">${esc((r.steps || []).join('  →  '))}</div>`;
+      if (r.koinOut == null) {
+        return `<div class="fund-route">${head}${steps}<div class="fund-unavail">unavailable: ${esc(r.error || 'no quote')}</div></div>`;
+      }
+      const best = r.isBest ? ' <span class="fund-best">★ best</span>'
+        : (r.pctOfBest != null ? ` <span class="fund-worse">— ${r.pctOfBest}% of best</span>` : '');
+      const min = r.koinOutMin ? ` <span class="fund-min">(min ${koin(r.koinOutMin)} after slippage)</span>` : '';
+      const btnLabel = single ? 'Swap & bridge to KOIN' : `Use Route ${esc(r.id)}`;
+      return `<div class="fund-route${r.isBest ? ' is-best' : ''}">` +
+        `<div class="fund-route-head">${head}` +
+        `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}">${btnLabel}</button></div>` +
+        steps +
+        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}</div>` +
+        `</div>`;
+    }).join('');
+  }
+
+  async function startSwap(asset, amount, route, btn) {
     if (BUSY) return;
-    BUSY = true; btn.disabled = true;
+    BUSY = true; if (btn) btn.disabled = true;
     try {
       say('Starting the swap — the server drives the Ethereum side from here…');
-      await CTX.api('/api/fund/start', { credentialId: CTX.credentialId(), asset });
+      await CTX.api('/api/fund/start', { credentialId: CTX.credentialId(), asset, amount, route });
       say('');
       await refresh();
     } catch (e) { say(e.message || 'Could not start the swap', 'err'); }
-    finally { BUSY = false; btn.disabled = false; }
+    finally { BUSY = false; if (btn) btn.disabled = false; }
   }
 
   /* The passkey landing: bridge redeem (and Route B's KoinDX swap). */
@@ -119,10 +174,19 @@ const Fund = (() => {
     if (!st.enabled) return;
 
     $('#fund-eth-addr').textContent = st.ethAddress;
-
-    /* What the deposit address holds right now — zeros included, so there
-       is never a question of what's in there. Demo data says so, loudly. */
     const b = st.balances;
+
+    /* Deposit balances as first-class wallet stats, next to KOIN and mana. */
+    const tiles = $('#deposit-stats');
+    if (tiles) {
+      tiles.hidden = false;
+      const f = (v, dp) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: dp });
+      const tag = st.demo ? ' <span class="stat-sample">sample</span>' : '';
+      $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
+      $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
+    }
+
+    /* the in-card strip mirrors the same numbers */
     const strip = [];
     if (st.demo) strip.push('<span class="fund-sample">SAMPLE — demo mode</span>');
     if (b) {
@@ -141,24 +205,40 @@ const Fund = (() => {
     $('#fund-idle').hidden = !!jobActive || (j && j.status === 'error');
     $('#fund-job').hidden = !j;
 
-    /* balances + one-click swap rows */
-    const rows = [];
-    if (!jobActive && st.balances) {
-      const q = st.quotes || {};
-      const add = (asset, sym, amount, quote) => {
-        if (!(Number(amount) > 0)) return;
-        const est = quote && quote.koinOut ? ` → ≈ <strong>${koin(quote.koinOut)} KOIN</strong>` : '';
-        const via = asset === 'eth' && quote && quote.best ? ` <span class="fund-via">via ${quote.best.label}</span>` : '';
-        rows.push(`<div class="fund-row"><span>${amount} ${sym}${est}${via}</span>` +
-          `<button class="cta small" data-asset="${asset}">Swap to KOIN</button></div>`);
-      };
-      add('eth', 'ETH', st.balances.eth, q.eth ? { koinOut: q.eth.best && q.eth.best.koinOut, best: q.eth.best } : null);
-      add('usdc', 'USDC', st.balances.usdc, q.usdc);
-      add('usdt', 'USDT', st.balances.usdt, q.usdt);
+    /* per-asset amount + route panels (only rebuilt when idle, so typing
+       is never clobbered by the poll) */
+    const assets = $('#fund-assets');
+    if (!jobActive && b && st.spendable) {
+      const lowGas = !st.gasFronting && Number(b.eth) < Number(st.gasMinEth || 0.0012);
+      const panels = [];
+      for (const asset of ['eth', 'usdc', 'usdt']) {
+        const spend = st.spendable[asset];
+        if (!(Number(spend) > 0)) continue;
+        const open = document.querySelector(`.fund-asset[data-asset="${asset}"] input[data-amt]`);
+        const value = open && document.activeElement === open ? open.value : spend;
+        const cap = asset === 'eth' ? (st.caps ? st.caps.eth : '') : (st.caps ? st.caps.stable : '');
+        const q = st.quotes && st.quotes[asset];
+        panels.push(
+          `<div class="fund-asset" data-asset="${asset}" data-spendable="${esc(spend)}">` +
+          `<div class="fund-asset-head">${esc(Number(b[asset]).toLocaleString('en-US', { maximumFractionDigits: asset === 'eth' ? 5 : 2 }))} ${SYM[asset]} at your deposit address</div>` +
+          `<label class="fund-amt-label">Amount (${SYM[asset]} · max ${esc(spend)}${cap ? ' · cap ' + esc(cap) : ''})</label>` +
+          `<div class="fund-amount-row"><input data-amt inputmode="decimal" autocomplete="off" spellcheck="false" value="${esc(value)}">` +
+          `<button class="ghost" data-max>Max</button></div>` +
+          `<div data-routes>${q ? routesHtml(asset, q) : '<div class="hint">Pricing routes…</div>'}</div>` +
+          (asset !== 'eth' && lowGas
+            ? `<div class="fund-gaswarn">⚠ This address holds almost no ETH — swaps need ~${esc(st.gasMinEth)} ETH for Ethereum gas. Send a little ETH along with your ${SYM[asset]}.</div>`
+            : '') +
+          `</div>`);
+      }
+      /* Rebuild only when the set of panels changes or none exist, or when
+         no input is focused — otherwise leave the DOM alone. */
+      const focused = document.activeElement && assets.contains(document.activeElement);
+      if (!focused) assets.innerHTML = panels.join('');
+      $('#fund-empty').hidden = !!panels.length;
+    } else if (jobActive) {
+      assets.innerHTML = '';
+      $('#fund-empty').hidden = true;
     }
-    $('#fund-swaps').innerHTML = rows.join('');
-    $('#fund-empty').hidden = !!rows.length || !!jobActive || !!(j && j.status === 'error');
-    if (st.balancesError) say('Ethereum balances unavailable right now: ' + st.balancesError, '');
 
     /* the job */
     if (j) {
@@ -167,8 +247,7 @@ const Fund = (() => {
         : (STEP_LABEL[j.status] || j.status);
       $('#fund-job-label').textContent = label;
       $('#fund-job-sub').textContent = jobActive && j.estKoinOut
-        ? `${j.amountLabel || (j.amountEth ? j.amountEth + ' ETH' : '')} → ≈ ${koin(j.estKoinOut)} KOIN` +
-          (j.route ? ` · route ${j.route}` : '')
+        ? `${j.amountLabel || ''} → ≈ ${koin(j.estKoinOut)} KOIN · route ${j.route}`
         : '';
       $('#fund-spin').hidden = !jobActive || ['awaiting_redeem', 'awaiting_swap'].includes(j.status);
       $('#btn-fund-land').hidden = !['awaiting_redeem', 'awaiting_swap'].includes(j.status);
