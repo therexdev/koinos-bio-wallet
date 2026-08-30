@@ -569,6 +569,23 @@ async function verifyPasskeyOnChain(account, sigB64u, txId) {
   }
 }
 
+/** "unexpected signature length" is a symptom, not a cause.
+
+    check_authority (koinos-chain system_calls.cpp) routes to a contract's own
+    authorize() only when that account IS a contract with the matching
+    authorize-override flag. For anything else it falls back to a loop that
+    calls recover_public_key(ecdsa_secp256k1, ...) over the transaction's
+    signatures — and that thunk hard-asserts a 65-byte signature. A WebAuthn
+    blob is far longer, so the moment the chain checks a PLAIN address while
+    our blob is attached, it aborts with this message no matter how good the
+    passkey is. Which means: the passkey wasn't accepted by the check that ran
+    first. Say that, instead of repeating the chain's words. */
+function explainSigLength(msg) {
+  if (!/unexpected signature length/i.test(msg)) return msg;
+  return `${msg} — the chain fell back to plain-signature checking while your passkey signature was attached, `
+    + 'which only happens when the passkey was not accepted by the check before it';
+}
+
 async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
   if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
   const recomputed = Transaction.computeTransactionId(signedTx.header);
@@ -622,9 +639,10 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
       /* The pre-flight said yes (or couldn't tell) and the chain still said
          no — carry the module's own log lines and the shapes it saw, so the
          next report names a cause instead of a symptom. */
+      const raw = humanChainError(e);
       const why = pre.logs && pre.logs.length ? ` [sign module: ${pre.logs.join(' | ')}]` : '';
       const sizes = clean.signatures.map((x) => utils.decodeBase64url(x).length).join(',');
-      throw new Error(`${humanChainError(e)}${why} (sigs ${sizes}; payer ${clean.header.payer}; payee ${clean.header.payee || '-'})`);
+      throw new Error(`${explainSigLength(raw)}${why} (sigs ${sizes}; payer ${clean.header.payer}; payee ${clean.header.payee || '-'})`);
     }
     try { await waitMined(clean.id); }
     catch (e) {

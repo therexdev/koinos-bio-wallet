@@ -31,8 +31,15 @@ const chain = require("../tools/chain");
 const funding = require("../tools/funding");
 
 const ACCOUNT = "1LandingTestAccountAddressXXXXXXXX";
+const SPONSOR_WIF = require("koilib").Signer.fromSeed("redeem-test-sponsor").getPrivateKey("wif");
+chain.configure({ network: "mainnet", rpcs: ["http://stub.invalid"], sponsorWif: SPONSOR_WIF });
+const SPONSOR = chain.sponsorAddress();
+
+/** A record our sponsor is named relayer on — what every new deposit looks
+    like now, and what lets the sponsor land it with no signature from the
+    user. */
 const RECORD = {
-  id: "0xdeadbeef", recipient: ACCOUNT, koinosToken: "1KoinToken",
+  id: "0xdeadbeef", recipient: ACCOUNT, koinosToken: "1KoinToken", relayer: SPONSOR,
   amount: "12419000000", signatures: ["sigA", "sigB"],
   expiration: String(Date.now() + 30 * 60 * 1000),
 };
@@ -107,6 +114,29 @@ function sponsorSays(behaviour) {
     assert.strictEqual(j.koinReceived, RECORD.amount);
     assert.strictEqual(j.taps, 1, "that one counted as a tap");
     console.log("✓ chain refuses sponsor-only → falls back to the passkey tap, then lands");
+  }
+
+  /* --- 2b. a record with no relayer is the recipient's to claim, and the
+     sponsor must not waste mana discovering that --- */
+  {
+    parked({ record: { ...RECORD, relayer: "" } });
+    const seen = sponsorSays(() => "0xshould-not-be-submitted");
+    await funding.tick();
+    const j = funding.job(ACCOUNT);
+    assert.strictEqual(j.needsTap, true, "an empty relayer means only the recipient can claim");
+    assert.strictEqual(j.status, "awaiting_redeem");
+    assert.strictEqual(seen.length, 0, "and no doomed transaction is sent to find out");
+    console.log("✓ a record with no relayer goes straight to the passkey, spending nothing");
+  }
+
+  /* --- 2c. a record naming someone else's relayer is equally not ours --- */
+  {
+    parked({ record: { ...RECORD, relayer: "1SomeoneElsesRelayerAddressXXXXXX" } });
+    const seen = sponsorSays(() => "0xshould-not-be-submitted");
+    await funding.tick();
+    assert.strictEqual(funding.job(ACCOUNT).needsTap, true);
+    assert.strictEqual(seen.length, 0);
+    console.log("✓ a foreign relayer is not mistaken for ours");
   }
 
   /* --- 3. without that refusal, nothing offers a pointless tap --- */

@@ -137,10 +137,15 @@ async function maxBridgeable({ fromAddress, koinosRecipient, network = "mainnet"
 
 // Sign + broadcast the deposit. REAL ETH MOVES HERE. Validation runs before any
 // network use so bad input never reaches the chain.
-async function sendDeposit({ ethPrivHex, amountEth, koinosRecipient, network = "mainnet", provider, maxEth = DEFAULT_MAX_ETH } = {}) {
+// `relayer`, when given, is who may submit the Koinos-side complete_transfer
+// besides the recipient — see eth-bridge-token.js for why that matters and why
+// it grants no claim on the funds (payment is 0).
+async function sendDeposit({ ethPrivHex, amountEth, koinosRecipient, relayer = "", network = "mainnet", provider, maxEth = DEFAULT_MAX_ETH } = {}) {
   const cfg = BRIDGE[network];
   if (!cfg || !cfg.ethBridge) throw new Error(`Bridge not configured for ${network}`);
   if (!validKoinosAddress(koinosRecipient)) throw new Error("Invalid Koinos recipient address");
+  if (relayer && !validKoinosAddress(relayer)) throw new Error("Invalid Koinos relayer address");
+  const rel = String(relayer || "");
   const priv = normPriv(ethPrivHex);
   const amountWei = ethers.parseEther(String(amountEth));
   if (amountWei <= 0n) throw new Error("Amount must be greater than 0");
@@ -155,14 +160,14 @@ async function sendDeposit({ ethPrivHex, amountEth, koinosRecipient, network = "
   if (await bridge.paused()) throw new Error("The Vortex bridge is currently paused");
 
   const balance = await p.getBalance(wallet.address);
-  const gasLimit = await bridge.wrapAndTransferETH.estimateGas(0, "", koinosRecipient, "", cfg.toChain, { value: amountWei });
+  const gasLimit = await bridge.wrapAndTransferETH.estimateGas(0, rel, koinosRecipient, "", cfg.toChain, { value: amountWei });
   const fee = await p.getFeeData();
   const perGas = fee.maxFeePerGas ?? fee.gasPrice ?? 0n;
   if (balance < amountWei + gasLimit * perGas) {
     throw new Error("Insufficient ETH to cover the amount plus gas");
   }
 
-  const tx = await bridge.wrapAndTransferETH(0, "", koinosRecipient, "", cfg.toChain, {
+  const tx = await bridge.wrapAndTransferETH(0, rel, koinosRecipient, "", cfg.toChain, {
     value: amountWei,
     gasLimit: (gasLimit * 12n) / 10n, // 20% headroom
   });

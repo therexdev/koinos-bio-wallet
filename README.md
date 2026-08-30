@@ -109,17 +109,23 @@ new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150).
 
 **How custody works here — stated plainly:** the deposit address is a
 *transit* address whose key the server holds (like the bootstrap key). The
-server drives the Ethereum legs, then tries to complete the Vortex bridge
-redeem itself — the recipient is fixed inside the guardian-signed record, so
-that transaction can only ever deliver to the user's own account, and the
-bridge carries a relayer field precisely so a third party can pay for it.
-Nobody, including us, can redirect it, so a tap there would buy no security.
-If the deployed bridge disagrees and demands the recipient's own authority,
-the job says so and the **passkey** finishes it instead — the chain decides,
-not an assumption (`node tests/redeem-fallback.test.js` pins both). Route B's
-final KoinDX swap always needs the passkey: it *spends* vETH from the account.
-Funds are custodial only while in transit, and land on an account only the
-passkey can spend from. Keep transit amounts modest.
+server drives the Ethereum legs, then completes the Vortex bridge redeem
+itself. That is possible because the Ethereum-side deposit names our sponsor
+in the bridge's **relayer** field: the Koinos side refuses `complete_transfer`
+with *"tokens can only be claimed by the recipient or relayer"*, and being the
+relayer is what lets the sponsor submit it. It grants no claim on the money —
+`complete_transfer` mints the amount to the **recipient** and only `payment`,
+which is 0, to the relayer, and both names are sealed into the guardian-signed
+record at deposit time. So the landing cannot be redirected, and asking the
+user to tap for it would buy nothing.
+
+A deposit bridged before that field was set carries an empty relayer and can
+only be claimed by its recipient; those fall back to a **passkey** tap, and the
+job says so rather than spending mana finding out. Route B's final KoinDX swap
+always needs the passkey: it *spends* vETH from the account.
+`node tests/redeem-fallback.test.js` pins every branch. Funds are custodial
+only while in transit, and land on an account only the passkey can spend from.
+Keep transit amounts modest.
 
 Stablecoin-only deposits need a little ETH for Ethereum gas; set
 `ETH_GAS_SPONSOR_KEY` (an Ethereum private key holding some ETH) and the app

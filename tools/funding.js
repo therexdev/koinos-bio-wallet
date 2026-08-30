@@ -528,14 +528,18 @@ async function advanceEth(account, j) {
       return saveJob(account, { ...j, pendingTx: hash });
     }
     case "bridge_token": {
-      const tx = buildTransferTokensTx({ token: RC.VKOIN, amountSats: j.vkoinSats, koinosRecipient: j.koinosRecipient, network: S.network });
+      const tx = buildTransferTokensTx({
+        token: RC.VKOIN, amountSats: j.vkoinSats, koinosRecipient: j.koinosRecipient,
+        relayer: relayerAddress(), network: S.network,
+      });
       const { hash } = await swap.sendTx(wallet, tx);
       return saveJob(account, { ...j, pendingTx: hash });
     }
     case "deposit_eth": { // Route B
       const dep = await ethBridge.sendDeposit({
         ethPrivHex: transitFor(account).ethPriv, amountEth: j.amountEth,
-        koinosRecipient: j.koinosRecipient, network: S.network, provider: p, maxEth: S.maxEth,
+        koinosRecipient: j.koinosRecipient, relayer: relayerAddress(),
+        network: S.network, provider: p, maxEth: S.maxEth,
       });
       return saveJob(account, { ...j, status: "awaiting_signatures", ethTxHash: dep.hash, sigStartedAt: Date.now() });
     }
@@ -608,8 +612,26 @@ async function pollGuardians(account, j) {
 
 /* The bridge already delivered this record (a reply we lost, or a retry). */
 const ALREADY_DONE = /already complet|already redeem|already processed|has been completed|already exists/i;
-/* The chain refused a sponsor-only redeem: the recipient must authorize. */
-const NEEDS_RECIPIENT = /has not authorized|not authorized|authority|unauthorized/i;
+/* The chain refused a sponsor-only redeem: only the recipient may claim.
+   The first pattern is the Koinos bridge's own words. */
+const NEEDS_RECIPIENT = /claimed by the recipient|recipient or relayer|has not authorized|not authorized|authority|unauthorized/i;
+
+/** Who may submit complete_transfer for this record?
+
+    The Koinos bridge answers "tokens can only be claimed by the recipient or
+    relayer", and both names are sealed into the guardian-signed record when
+    the Ethereum-side deposit is made. We now put our sponsor in the relayer
+    field (see eth-bridge-token.js), so new deposits can be landed by the
+    sponsor with no signature from the user at all. Deposits made before that
+    carry an empty relayer and can only be claimed by their recipient — the
+    user's own account — which means a passkey signature. */
+function sponsorMayRedeem(record) {
+  try { return !!record && String(record.relayer || "") === chain.sponsorAddress(); }
+  catch (_) { return false; }
+}
+function relayerAddress() {
+  try { return chain.sponsorAddress() || ""; } catch (_) { return ""; }
+}
 
 /** Try to complete the bridge transfer on the sponsor's own nonce. The
     recipient is fixed inside the guardian-signed record, so this can only
@@ -620,6 +642,13 @@ async function autoRedeem(account, j) {
   const exp = j.record && Number(j.record.expiration);
   if (exp && exp <= Date.now()) {
     saveJob(account, { ...j, status: "awaiting_signatures", sigStartedAt: Date.now() });
+    return;
+  }
+  /* This record names someone else (or nobody) as relayer, so the sponsor
+     cannot claim it — don't spend mana proving that, just hand it to the
+     passkey. */
+  if (!sponsorMayRedeem(j.record)) {
+    saveJob(account, { ...j, needsTap: true, redeemNote: "this deposit can only be claimed by your account" });
     return;
   }
   const attempts = (j.redeemAttempts || 0) + 1;

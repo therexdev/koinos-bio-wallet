@@ -59,6 +59,42 @@ eq("ETH deposit wrapAndTransferETH", {
   value: "12345678900000000",
 }, V.wrapAndTransfer);
 
+/* The relayer field — the one deliberate departure from the desktop node.
+   It decides who may later submit complete_transfer on Koinos, and the two
+   parity checks above prove that leaving it empty still reproduces the
+   original calldata exactly. These pin what happens when it is set: the name
+   lands in the relayer slot and NOWHERE else, and payment stays zero, so the
+   relayer is authorized to submit while the funds still go only to the
+   recipient. */
+{
+  const RELAYER = require("koilib").Signer.fromSeed("parity-relayer").getAddress();
+  const iface = new ethers.Interface([
+    "function transferTokens(address token, uint256 amount, uint256 payment, string relayer, string recipient, string metadata, uint32 toChain) payable",
+  ]);
+  const withRelayer = buildTransferTokensTx({
+    token: RC.VKOIN, amountSats: "52000000000", koinosRecipient: KOINOS_RECIP,
+    relayer: RELAYER, network: "mainnet",
+  });
+  const d = iface.decodeFunctionData("transferTokens", withRelayer.data);
+  assert.strictEqual(d.relayer, RELAYER, "the relayer must land in the relayer field");
+  assert.strictEqual(d.recipient, KOINOS_RECIP, "and must not disturb the recipient");
+  assert.strictEqual(d.payment, 0n, "the relayer is paid nothing — it may submit, not claim");
+  assert.strictEqual(d.amount, 52000000000n);
+  assert.strictEqual(withRelayer.value, 0n);
+
+  const wrap = new ethers.Interface(BRIDGE_ABI).decodeFunctionData("wrapAndTransferETH",
+    new ethers.Interface(BRIDGE_ABI).encodeFunctionData("wrapAndTransferETH", [0, RELAYER, KOINOS_RECIP, "", 1]));
+  assert.strictEqual(wrap[1], RELAYER);
+  assert.strictEqual(wrap[2], KOINOS_RECIP);
+
+  /* A malformed relayer must be refused rather than silently bridged away. */
+  assert.throws(() => buildTransferTokensTx({
+    token: RC.VKOIN, amountSats: "1", koinosRecipient: KOINOS_RECIP,
+    relayer: "not-a-koinos-address", network: "mainnet",
+  }), /relayer/i);
+  console.log("✓ relayer encodes into its own field, pays nothing, and is validated");
+}
+
 /* Pure helpers agree with the original */
 assert.deepStrictEqual(
   JSON.parse(JSON.stringify(weiToVethSats("12345678901234567890"))), V.weiToVeth);
