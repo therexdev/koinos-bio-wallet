@@ -190,8 +190,23 @@ api.whoami = async (body) => {
 
 /** Ground truth: what the chain actually says about this account,
     next to what the local store believes. Read-only, no secrets. */
+/** Read-only health report for one account. Takes whichever identifier the
+    person actually has: the account ADDRESS (what the wallet shows them) or
+    the passkey's credential id. */
 api.diagnose = async (params) => {
-  const rec = veive.status(params.get('credentialId'));
+  const address = String(params.get('address') || '').trim();
+  const credentialId = String(params.get('credentialId') || '').trim();
+  if (!address && !credentialId) {
+    throw httpError(400, 'pass ?address=<your account address> (or ?credentialId=<passkey id>)');
+  }
+  let rec = credentialId ? veive.status(credentialId) : null;
+  if (!rec && address) {
+    if (!chain.isAddr(address)) throw httpError(400, `${address} is not a Koinos address`);
+    rec = veive.statusByAddress(address)
+      /* Not in the local store — still worth reporting what the CHAIN says
+         about it, which is the part that matters for a stuck account. */
+      || { address, step: 'unknown', credentials: [], notInStore: true };
+  }
   if (!rec) throw httpError(404, 'no account for that passkey');
   const chainState = await veive.inspect(rec.address);
   /* The validator's threshold decides whether a sponsor-co-signed
@@ -199,6 +214,8 @@ api.diagnose = async (params) => {
   const threshold = DEMO ? null : await chain.validationThreshold(rec.address);
   return {
     ok: true, demo: DEMO, network: CFG.network,
+    /* One line worth reading on a phone; the fields below have the detail. */
+    summary: diagnoseSummary(rec, chainState, threshold),
     local: { address: rec.address, step: rec.step, credentials: rec.credentials, error: rec.error },
     chain: chainState,
     validator: threshold && {
@@ -212,6 +229,24 @@ api.diagnose = async (params) => {
     sponsor: DEMO ? null : chain.sponsorAddress(),
   };
 };
+
+/** The report in one sentence, leading with whatever is actually wrong. */
+function diagnoseSummary(rec, chainState, threshold) {
+  const at = rec.address;
+  if (DEMO) return `${at}: demo mode — no chain to inspect`;
+  if (chainState.contractExists === false) return `${at}: no smart-account contract at this address`;
+  if (!chainState.signModuleInstalled) return `${at}: the passkey sign module is NOT installed`;
+  if (!chainState.validatorInstalled) return `${at}: the validator module is NOT installed`;
+  if (threshold && threshold.value === 0) {
+    return `${at}: validator threshold is 0 — it requires EVERY signature on a transaction to be a `
+      + 'passkey signature, so the sponsor cannot co-sign to pay the fee and every passkey transaction '
+      + 'will be refused. This is the bug.';
+  }
+  if (threshold && threshold.value === null) return `${at}: could not read the validator threshold (${threshold.error})`;
+  const creds = (chainState.registeredCredentials || []).length;
+  if (!creds) return `${at}: no passkey credential is registered on-chain`;
+  return `${at}: healthy — validator threshold ${threshold.value}, ${creds} credential(s) registered on-chain`;
+}
 
 api.account = async (params) => {
   const address = params.get('address');

@@ -227,6 +227,13 @@ function status(credentialId) {
   return addr ? publicView(S.store.accounts[addr]) : null;
 }
 
+/** Same view, looked up by the account address instead of a credential —
+    the address is what a person actually has in front of them. */
+function statusByAddress(address) {
+  const rec = S.store.accounts[String(address || '')];
+  return rec ? publicView(rec) : null;
+}
+
 /** credential → account. The store answers first; the chain's own
     reverse index (get_address_by_credential_id) covers accounts created
     elsewhere against the same shared modules. */
@@ -303,7 +310,7 @@ function reconcile() {
 }
 
 module.exports = {
-  configure, createOrResume, status, whoami, credentialsFor, isSmartAccount,
+  configure, createOrResume, status, statusByAddress, whoami, credentialsFor, isSmartAccount,
   accountsCreatedSince, reconcile, addCredential, hasCredential, credentialCount,
   inspect, ensureReady,
   CRED_ID, validPublicKey,
