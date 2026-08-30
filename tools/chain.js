@@ -586,6 +586,44 @@ function explainSigLength(msg) {
     + 'which only happens when the passkey was not accepted by the check before it';
 }
 
+/** Read the validator's signature threshold for this account.
+
+    It decides how ModValidationSignature counts the transaction's
+    signatures, and 0 is not "no requirement" — it is the strictest setting
+    there is:
+
+      threshold 0  → EVERY signature on the transaction must be a valid
+                     passkey signature for this account
+      threshold n  → at least n of them must be
+
+    Which matters because our transactions carry two: the sponsor's
+    secp256k1 signature (it pays the mana) and the passkey blob. Under
+    threshold 0 that is one valid out of two, so the validator refuses no
+    matter how good the passkey is — and the chain then falls through to a
+    plain-signature check that trips over the blob's length. The module sets
+    the threshold to 1 in its on_install hook, so a 0 here means that hook
+    never ran on this account.
+
+    Returns { value, error } and never throws — a diagnostic must not break
+    the path it is diagnosing. */
+async function validationThreshold(address) {
+  try {
+    const m = MODVAL_ABI.methods.get_threshold;
+    const ser = modValSerializer();
+    const args = await ser.serialize({ user: address }, m.argument);
+    const res = await withRpcRetry(() => provider().readContract({
+      contract_id: K.modules.modValidation,
+      entry_point: m.entry_point,
+      args: utils.encodeBase64url(args),
+    }));
+    if (!res || !res.result) return { value: 0, error: null }; // protobuf omits 0
+    const out = await ser.deserialize(utils.decodeBase64url(res.result), m.return);
+    return { value: Number((out && out.value) || 0), error: null };
+  } catch (e) {
+    return { value: null, error: humanChainError(e) };
+  }
+}
+
 async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCredentialIds) {
   if (!signedTx || signedTx.id !== preparedId) throw new Error('transaction does not match the prepared action');
   const recomputed = Transaction.computeTransactionId(signedTx.header);
@@ -624,6 +662,18 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
     throw new Error(`the chain rejected your passkey signature: ${why}`);
   }
 
+  /* The sponsor is about to co-sign to pay the mana. Under threshold 0 that
+     co-signature alone guarantees the validator refuses, so say so here
+     rather than letting it surface as a signature-length assert. */
+  const thr = await validationThreshold(accountAddr);
+  if (thr.value === 0) {
+    throw new Error(
+      "your account's validator is set to require EVERY signature on a transaction to be a passkey "
+      + 'signature (threshold 0), but the sponsor has to co-sign to pay the network fee — so the chain '
+      + 'will refuse it however good the passkey is. The validator module sets this to 1 in its install '
+      + 'hook, so that hook never ran on this account.');
+  }
+
   const clean = {
     id: signedTx.id, header: signedTx.header,
     operations: signedTx.operations, signatures: [],
@@ -640,7 +690,11 @@ async function submitSmartCosigned(signedTx, preparedId, accountAddr, expectedCr
          no — carry the module's own log lines and the shapes it saw, so the
          next report names a cause instead of a symptom. */
       const raw = humanChainError(e);
-      const why = pre.logs && pre.logs.length ? ` [sign module: ${pre.logs.join(' | ')}]` : '';
+      /* Distinguish "the module accepted it" from "we could not ask" — an
+         absent clause used to mean either. */
+      const verdict = pre.ok === true ? 'accepted' : pre.error ? `unreadable: ${pre.error}` : 'no verdict';
+      const why = ` [sign module: ${verdict}${pre.logs && pre.logs.length ? '; ' + pre.logs.join(' | ') : ''}`
+        + `; validator threshold ${thr.value === null ? `unreadable (${thr.error})` : thr.value}]`;
       const sizes = clean.signatures.map((x) => utils.decodeBase64url(x).length).join(',');
       throw new Error(`${explainSigLength(raw)}${why} (sigs ${sizes}; payer ${clean.header.payer}; payee ${clean.header.payee || '-'})`);
     }
@@ -682,7 +736,8 @@ module.exports = {
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,
   accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,
-  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor, verifyPasskeyOnChain,
+  bootstrapSmartAccount, submitSmartCosigned, sendAsAccount, sendAsSponsorFor,
+  verifyPasskeyOnChain, validationThreshold,
   opUploadContract, opInstallModule, opRegisterCredential, defaultScopes,
   modSignSerializer, ACCOUNT_WASM_PATH, VENDOR,
 };

@@ -194,10 +194,20 @@ api.diagnose = async (params) => {
   const rec = veive.status(params.get('credentialId'));
   if (!rec) throw httpError(404, 'no account for that passkey');
   const chainState = await veive.inspect(rec.address);
+  /* The validator's threshold decides whether a sponsor-co-signed
+     transaction can EVER be accepted — see chain.validationThreshold. */
+  const threshold = DEMO ? null : await chain.validationThreshold(rec.address);
   return {
     ok: true, demo: DEMO, network: CFG.network,
     local: { address: rec.address, step: rec.step, credentials: rec.credentials, error: rec.error },
     chain: chainState,
+    validator: threshold && {
+      threshold: threshold.value, error: threshold.error,
+      cosignable: threshold.value === null ? null : threshold.value > 0,
+      note: threshold.value === 0
+        ? 'threshold 0 requires EVERY signature to be a passkey signature, so the sponsor cannot co-sign to pay the fee'
+        : undefined,
+    },
     modules: CFG.modules,
     sponsor: DEMO ? null : chain.sponsorAddress(),
   };

@@ -33,6 +33,7 @@ const ABI = require("../contracts/vendor/mod-sign-webauthn/modsignwebauthn-abi.j
 const M = ABI.methods.is_valid_signature;
 const ACCOUNT = Signer.fromSeed("preflight-account").getAddress();
 const MODSIGN = Signer.fromSeed("preflight-modsign").getAddress();
+const MODVAL = Signer.fromSeed("preflight-modval").getAddress();
 const TXID = "0x1220" + "ab".repeat(32);
 const SIG = "_wJKMwoUY3JlZGVudGlhbA==";
 
@@ -54,7 +55,7 @@ const encodeResult = async (value) =>
 chain.configure({
   network: "mainnet",
   rpcs: ["http://stub.invalid"],
-  modules: { modSign: MODSIGN, modValidation: "", verifier: "" },
+  modules: { modSign: MODSIGN, modValidation: MODVAL, verifier: "" },
 });
 
 (async () => {
@@ -101,6 +102,41 @@ chain.configure({
     assert.strictEqual(out.ok, null, "an RPC error must stay undecided");
     assert.ok(out.error, "and must be reported as an error, not a verdict");
     console.log("✓ an RPC error stays undecided and never throws");
+  }
+
+  /* --- 4. the validator threshold, which decides whether the sponsor may
+     co-sign at all. Same protobuf trap as above, and here the value that
+     encodes to nothing is the DANGEROUS one: 0 means "every signature must
+     be a passkey signature", so reading it as "unknown" would let a doomed
+     transaction through. --- */
+  {
+    const MODVAL_ABI = require("../contracts/vendor/mod-validation-signature/modvalidationsignature-abi.json");
+    const MV = MODVAL_ABI.methods.get_threshold;
+    const mvSer = new Serializer(MODVAL_ABI.koilib_types);
+    const encThreshold = async (value) =>
+      utils.encodeBase64url(await mvSer.serialize({ value }, MV.return));
+
+    assert.strictEqual(await encThreshold(0), "",
+      "threshold 0 encodes to nothing — the whole reason this check exists");
+
+    serve(() => ({ jsonrpc: "2.0", id: 1, result: {} }));
+    let out = await chain.validationThreshold(ACCOUNT);
+    assert.strictEqual(out.value, 0, "an empty result IS zero, not 'unknown'");
+    assert.strictEqual(out.error, null);
+
+    const one = await encThreshold(1);
+    const calls = serve(() => ({ jsonrpc: "2.0", id: 1, result: { result: one } }));
+    out = await chain.validationThreshold(ACCOUNT);
+    assert.strictEqual(out.value, 1, "a set threshold reads back");
+    assert.strictEqual(calls[0].params.entry_point, MV.entry_point);
+    const asked = await mvSer.deserialize(utils.decodeBase64url(calls[0].params.args), MV.argument);
+    assert.deepStrictEqual(asked, { user: ACCOUNT }, "and it asks about THIS account");
+
+    serve(() => ({ jsonrpc: "2.0", id: 1, error: { message: "node unavailable" } }));
+    out = await chain.validationThreshold(ACCOUNT);
+    assert.strictEqual(out.value, null, "an unreadable threshold is null, never 0");
+    assert.ok(out.error, "and carries its reason");
+    console.log("✓ validator threshold: empty means 0, set reads back, unreadable stays null");
   }
 
   HOOK = null;
