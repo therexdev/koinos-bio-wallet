@@ -188,6 +188,21 @@ api.whoami = async (body) => {
   return { ok: true, ...rec };
 };
 
+/** Ground truth: what the chain actually says about this account,
+    next to what the local store believes. Read-only, no secrets. */
+api.diagnose = async (params) => {
+  const rec = veive.status(params.get('credentialId'));
+  if (!rec) throw httpError(404, 'no account for that passkey');
+  const chainState = await veive.inspect(rec.address);
+  return {
+    ok: true, demo: DEMO, network: CFG.network,
+    local: { address: rec.address, step: rec.step, credentials: rec.credentials, error: rec.error },
+    chain: chainState,
+    modules: CFG.modules,
+    sponsor: DEMO ? null : chain.sponsorAddress(),
+  };
+};
+
 api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
@@ -220,6 +235,10 @@ api.prepareRegister = async (body, ip) => {
     throw httpError(400, `this account already holds ${CFG.maxCredentialsPerAccount} credentials`);
   }
   if (rateLimited('reg:addr:' + address, 6, 24 * 3600000)) throw httpError(429, 'that account added several credentials today — come back tomorrow');
+  if (!DEMO) {
+    try { await veive.ensureReady(address); }
+    catch (e) { throw httpError(409, e.message); }
+  }
   if (rateLimited('reg:ip:' + ip, 12, 24 * 3600000)) throw httpError(429, 'too many credential changes from this connection today');
 
   const newCred = { id, label, kind, publicKey: String(cred.publicKey) };
@@ -249,6 +268,12 @@ api.prepare = async (body, ip) => {
     if (err) throw httpError(400, err);
   } else if (!chain.isAddr(body.address)) {
     throw httpError(400, 'a valid Koinos address is required');
+  }
+  /* A prepared transaction is worthless if the chain doesn't actually
+     govern this account yet — verify (and repair) before spending mana. */
+  if (smart && !DEMO) {
+    try { await veive.ensureReady(body.address); }
+    catch (e) { throw httpError(409, e.message); }
   }
   const address = body.address;
   const to = String(body.to || '').trim();
@@ -389,6 +414,10 @@ api.fundReset = async (body) => {
     waiting on (bridge redeem, or Route B's KoinDX swap). */
 api.fundPrepareStep = async (body) => {
   const account = fundAccount(body.credentialId);
+  if (!DEMO) {
+    try { await veive.ensureReady(account); }
+    catch (e) { throw httpError(409, e.message); }
+  }
   let tap;
   try { tap = await chain.withRpcRetry(() => funding.prepareTapOps(account)); }
   catch (e) { throw httpError(400, chain.humanChainError(e)); }
@@ -493,7 +522,7 @@ function readBody(req, maxBytes = 64 * 1024) {
 const GET_ROUTES = {
   '/api/config': api.config, '/api/account': api.account,
   '/api/account-status': api.accountStatus, '/api/health': api.health,
-  '/api/fund/status': api.fundStatus,
+  '/api/fund/status': api.fundStatus, '/api/diagnose': api.diagnose,
 };
 const POST_ROUTES = {
   '/api/create-account': api.createAccount, '/api/whoami': api.whoami,

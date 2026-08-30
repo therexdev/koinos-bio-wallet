@@ -172,6 +172,51 @@ async function runBootstrap(rec) {
   }
 }
 
+/** Ground truth from the chain for one account — what actually exists,
+    versus what the local store believes. */
+async function inspect(address) {
+  const rec = S.store.accounts[String(address || '')];
+  const out = {
+    address, known: !!rec, step: rec ? rec.step : undefined,
+    demo: S.demo || undefined, createdAt: rec ? rec.ts : undefined,
+  };
+  if (S.demo || !chain.veiveReady()) { out.note = 'smart-account chain access not configured'; return out; }
+  const mods = await chain.accountModules(address);
+  out.contractExists = mods !== null;
+  out.modules = mods || [];
+  out.signModuleInstalled = !!mods && mods.includes(chain.K.modules.modSign);
+  out.validatorInstalled = !!mods && mods.includes(chain.K.modules.modValidation);
+  const creds = await chain.accountCredentials(address).catch(() => []);
+  out.registeredCredentials = creds.map((c) => c.credential_id);
+  out.localCredentials = rec ? rec.credentials.map((c) => c.id) : [];
+  out.credentialRegistered = out.localCredentials.some((id) => out.registeredCredentials.includes(id));
+  out.ready = !!(out.contractExists && out.signModuleInstalled && out.validatorInstalled && out.credentialRegistered);
+  return out;
+}
+
+/** Refuse to build a transaction for an account the chain doesn't actually
+    govern yet — and repair it. Accounts created while the app ran in demo
+    (or whose bootstrap was interrupted) exist only in the local store; the
+    chain would fall back to plain key recovery and reject the passkey with
+    a baffling low-level error. Cached, so the hot path stays cheap. */
+async function ensureReady(address) {
+  if (S.demo) return;
+  const rec = S.store.accounts[String(address || '')];
+  if (!rec) throw new Error('unknown account');
+  if (rec.verifiedAt && Date.now() - rec.verifiedAt < 10 * 60000) return;
+  const info = await inspect(address);
+  if (info.ready) { rec.verifiedAt = Date.now(); persist(); return; }
+  if (!rec.bootstrapWif) {
+    throw new Error('this account was never finished on-chain and can no longer be repaired automatically — create a fresh one');
+  }
+  rec.step = 'pending'; rec.error = null; rec.verifiedAt = 0;
+  persist();
+  runBootstrap(rec);
+  throw new Error(info.contractExists
+    ? 'your account is missing part of its on-chain setup — finishing it now, try again in a minute'
+    : 'your account was never written on-chain (it predates this deployment) — creating it now, try again in a minute');
+}
+
 function status(credentialId) {
   const addr = S.store.byCredential[String(credentialId || '')];
   return addr ? publicView(S.store.accounts[addr]) : null;
@@ -218,6 +263,26 @@ function accountsCreatedSince(ms) {
 
 /** Resume every half-bootstrapped account at boot, oldest first. */
 function reconcile() {
+  /* Anything claiming to be active is re-checked against the chain in the
+     background — a record written while the app ran in demo has no contract
+     behind it and must be really bootstrapped before it can sign. */
+  const claimed = Object.values(S.store.accounts).filter((r) => r.step === 'active' && r.bootstrapWif && !r.external);
+  if (claimed.length) {
+    (async () => {
+      for (const rec of claimed) {
+        try {
+          const info = await inspect(rec.address);
+          if (!info.ready) {
+            console.log(`[veive] ${rec.address} is not live on-chain (contract:${!!info.contractExists} sign:${!!info.signModuleInstalled} validator:${!!info.validatorInstalled} credential:${!!info.credentialRegistered}) — repairing`);
+            rec.step = 'pending'; rec.error = null; rec.verifiedAt = 0;
+            persist();
+            await runBootstrap(rec);
+          } else if (!rec.verifiedAt) { rec.verifiedAt = Date.now(); persist(); }
+        } catch (_) { /* transient — the next boot or tap re-checks */ }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    })();
+  }
   const pending = Object.values(S.store.accounts)
     .filter((r) => r.step === 'pending' && r.bootstrapWif)
     .sort((a, b) => a.ts - b.ts);
@@ -235,5 +300,6 @@ function reconcile() {
 module.exports = {
   configure, createOrResume, status, whoami, credentialsFor, isSmartAccount,
   accountsCreatedSince, reconcile, addCredential, hasCredential, credentialCount,
+  inspect, ensureReady,
   CRED_ID, validPublicKey,
 };
