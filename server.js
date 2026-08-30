@@ -66,6 +66,7 @@ const CFG = {
 
 let DEMO = CFG.demo;
 let BOOT_NOTE = '';
+const WARNINGS = [];
 
 /* ---------------- rate limiting (in-memory) ---------------- */
 
@@ -140,6 +141,7 @@ api.config = async () => {
     explorer: net.explorer,
     demo: DEMO,
     note: BOOT_NOTE || undefined,
+    warnings: WARNINGS.length ? WARNINGS : undefined,
     sponsor: DEMO ? null : chain.sponsorAddress(),
     modules: (CFG.modules.modSign && !DEMO) ? CFG.modules : null,
     rpId: CFG.passkeyRpId || null,   // null → the page uses its own hostname
@@ -518,10 +520,32 @@ const server = http.createServer(async (req, res) => {
 
 /* ---------------- boot ---------------- */
 
+async function connectChain() {
+  const rpcUrls = await pickRpcs(CFG.network);
+  chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
+  const [sponsorMana, sponsorKoin] = await Promise.all([
+    chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
+  ]);
+  console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
+  console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
+  console.log(`          verifier=${CFG.modules.verifier}`);
+}
+
+function applyMode() {
+  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
+  if (!DEMO) veive.reconcile();
+  /* The ETH funding rail runs live only on mainnet (the Vortex bridge and
+     Uniswap pools are mainnet); everywhere else it simulates. */
+  const fundingDemo = DEMO || CFG.network !== 'mainnet';
+  funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
+  console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
+}
+
 (async () => {
   console.log('Koinos Bio Wallet — Veive smart accounts');
   console.log(`network:  ${CFG.network}`);
   const modulesSet = !!(CFG.modules.modSign && CFG.modules.modValidation && CFG.modules.verifier);
+  let retryable = false;
   if (!CFG.sponsorWif) {
     DEMO = true;
     BOOT_NOTE = 'no sponsor wallet configured';
@@ -532,29 +556,42 @@ const server = http.createServer(async (req, res) => {
     console.log('mode:     DEMO — set VERIFIER_ADDR / MOD_SIGN_WEBAUTHN_ADDR / MOD_VALIDATION_SIGNATURE_ADDR (run tools/infra-deploy.js)');
   } else if (!DEMO) {
     try {
-      const rpcUrls = await pickRpcs(CFG.network);
-      chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
-      const [sponsorMana, sponsorKoin] = await Promise.all([
-        chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
-      ]);
-      console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
-      console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
-      console.log(`          verifier=${CFG.modules.verifier}`);
+      await connectChain();
     } catch (e) {
       DEMO = true;
-      BOOT_NOTE = 'chain unreachable at boot';
-      console.log(`mode:     DEMO — ${e.message}`);
+      retryable = true; // config is complete — only the RPC probe failed
+      BOOT_NOTE = 'chain unreachable at boot — retrying automatically';
+      console.log(`mode:     DEMO — ${e.message} (retrying every 60s)`);
     }
   } else {
     console.log('mode:     DEMO (DEMO_MODE=1)');
   }
-  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
-  if (!DEMO) veive.reconcile();
-  /* The ETH funding rail runs live only on mainnet (the Vortex bridge and
-     Uniswap pools are mainnet); everywhere else it simulates. */
-  const fundingDemo = DEMO || CFG.network !== 'mainnet';
-  funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
-  console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
+
+  if (!DEMO && !process.env.DATA_DIR) {
+    const w = 'DATA_DIR is not set — account and funding keys live inside the app folder, which a redeploy can WIPE. Set DATA_DIR=../bio-wallet-data.';
+    WARNINGS.push(w);
+    console.log('WARNING:  ' + w);
+  }
+
+  applyMode();
+
+  /* A live-configured server must never stay stuck in demo because one RPC
+     probe failed at boot: keep retrying and flip to live when the chain
+     answers. */
+  if (retryable) {
+    const timer = setInterval(async () => {
+      try {
+        await connectChain();
+        DEMO = false;
+        BOOT_NOTE = '';
+        applyMode();
+        console.log('mode:     LIVE — chain reachable again');
+        clearInterval(timer);
+      } catch (_) { /* still down — keep trying */ }
+    }, 60000);
+    if (timer.unref) timer.unref();
+  }
+
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);
