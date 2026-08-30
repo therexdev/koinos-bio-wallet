@@ -8,7 +8,7 @@ registered authority is your passkey. Every transaction is authorized by a
 WebAuthn assertion that **the blockchain itself verifies** (P-256, on-chain) —
 there is no private key to steal, phish, or back up, anywhere, ever.
 
-Live at **https://wallet.usekoinos.com**. This app is a deliberately separate
+Live at **https://buykoin.usekoinos.com**. This app is a deliberately separate
 playground for the smart-account concept — its own sponsor, its own passkeys,
 its own contracts — so it can grow without touching the other usekoinos apps.
 
@@ -191,7 +191,7 @@ node server.js
 | `VERIFIER_ADDR` | — | deployed P-256 verifier (infra-deploy) |
 | `MOD_SIGN_WEBAUTHN_ADDR` | — | deployed WebAuthn sign module (infra-deploy) |
 | `MOD_VALIDATION_SIGNATURE_ADDR` | — | deployed signature validator (infra-deploy) |
-| `PASSKEY_RPID` | *(page hostname)* | WebAuthn relying-party id. Leave unset on wallet.usekoinos.com — this playground's passkeys stay separate from other usekoinos apps by design |
+| `PASSKEY_RPID` | *(page hostname)* | WebAuthn relying-party id. Leave unset on buykoin.usekoinos.com — this playground's passkeys stay separate from other usekoinos apps by design |
 | `DATA_DIR` | `./data` | account store location. Set `../bio-wallet-data` on Hostinger — a relative value resolves against the app folder, so that lands just OUTSIDE the checkout and survives redeploys |
 | `TRUST_PROXY_HOPS` | `0` | proxy hops in front (Hostinger = 1) for real client IPs |
 | `MAX_ACCOUNTS_PER_DAY` | `3` | account creations per IP per day |
@@ -211,9 +211,9 @@ node server.js
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
 why on `/api/config`.
 
-### Deploy at wallet.usekoinos.com (Hostinger)
+### Deploy at buykoin.usekoinos.com (Hostinger)
 
-1. DNS: add `wallet` as a record on `usekoinos.com` pointing at the hosting.
+1. DNS: add `buykoin` as a record on `usekoinos.com` pointing at the hosting.
 2. Create a Node.js app from this repo (start command `node server.js`).
 3. Run the go-live steps above **on your own machine** (the secrets never
    need to touch the host), then set the env vars — including

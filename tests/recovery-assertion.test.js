@@ -48,7 +48,7 @@ function extractMsg(authData, clientData) {
 }
 
 (async () => {
-  Recovery.setContext({ rpId: 'wallet.usekoinos.com', origin: 'https://wallet.usekoinos.com' });
+  Recovery.setContext({ rpId: 'buykoin.usekoinos.com', origin: 'https://buykoin.usekoinos.com' });
 
   /* A kit is born exactly as in the browser. */
   const kit = await Recovery.generate();
@@ -96,14 +96,14 @@ function extractMsg(authData, clientData) {
     Buffer.from(Wire.decodeB64u(cd.challenge)).toString('utf8'), TX_ID,
     'challenge commits to the transaction id');
   assert.strictEqual(cd.type, 'webauthn.get');
-  assert.strictEqual(cd.origin, 'https://wallet.usekoinos.com');
+  assert.strictEqual(cd.origin, 'https://buykoin.usekoinos.com');
   console.log('✓ clientDataJSON: challenge == ASCII(tx id), origin carried');
 
   /* authenticatorData is well-formed WebAuthn: rpIdHash ‖ flags(UP|UV) ‖ counter */
   assert.strictEqual(authData.length, 37);
   assert.deepStrictEqual(
     authData.subarray(0, 32),
-    crypto.createHash('sha256').update('wallet.usekoinos.com').digest());
+    crypto.createHash('sha256').update('buykoin.usekoinos.com').digest());
   assert.strictEqual(authData[32], 0x05);
   console.log('✓ authenticatorData shaped like a real authenticator (rpIdHash + UP|UV flags)');
 

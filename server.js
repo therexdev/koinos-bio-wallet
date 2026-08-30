@@ -42,7 +42,7 @@ const CFG = {
     modValidation: (process.env.MOD_VALIDATION_SIGNATURE_ADDR || '').trim(),
   },
   /* The WebAuthn relying-party id passkeys bind to. Unset = the page's own
-     hostname — for wallet.usekoinos.com that keeps this app's passkeys fully
+     hostname — for buykoin.usekoinos.com that keeps this app's passkeys fully
      separate from other usekoinos apps, which is the point of this
      playground. (Set the apex domain only when you want passkeys shared
      across *.usekoinos.com.) */
