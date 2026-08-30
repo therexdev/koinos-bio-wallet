@@ -91,6 +91,38 @@
     </div>
 
     <div class="card">
+      <div class="k">Fund with ETH · USDC · USDT <span class="free-chip">auto-swapped to KOIN</span></div>
+      <div id="fund-setup">
+        <p class="hint" style="margin:6px 0 10px">Get a personal <strong>Ethereum deposit address</strong> for this
+          account. Send it ETH, USDC or USDT from any wallet or exchange, and one tap swaps the whole balance to
+          KOIN through the best of two live routes (Uniswap + the Vortex bridge) — your passkey signs the landing.</p>
+        <button class="ghost" id="btn-fund-enable">Get my Ethereum deposit address</button>
+      </div>
+      <div id="fund-body" hidden>
+        <div class="k" style="margin-top:2px">Your deposit address <span class="fund-net">Ethereum mainnet only</span></div>
+        <button class="addr fund-addr" id="fund-eth-addr" title="Copy Ethereum address"></button>
+        <p class="hint" style="margin:4px 0 10px">Tap to copy. Send ETH, USDC or USDT here — in-transit funds are
+          held by the app's funding key only until they land as KOIN on your smart account, so keep amounts modest.</p>
+        <div id="fund-idle">
+          <div id="fund-swaps"></div>
+          <p class="hint" id="fund-empty" style="margin:2px 0 6px">Waiting for a deposit… balances appear here
+            within a minute of confirming on Ethereum.</p>
+        </div>
+        <div class="status" id="fund-job" hidden>
+          <span class="fund-spin" id="fund-spin" hidden></span>
+          <span id="fund-job-label"></span>
+          <div class="hint" id="fund-job-sub" style="margin:4px 0 0"></div>
+          <div class="btn-row">
+            <button class="cta small" id="btn-fund-land" hidden>Land my KOIN — confirm with passkey</button>
+            <button class="ghost" id="btn-fund-retry" hidden>Retry</button>
+            <button class="ghost" id="btn-fund-reset" hidden>New swap</button>
+          </div>
+        </div>
+        <div class="status" id="fund-status" hidden></div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="k">Backups</div>
       <p class="hint" id="backup-nudge" style="margin:6px 0 8px" hidden>One passkey is one point of failure —
         if its account (Google / Apple) is ever lost, so is the wallet. Add a second passkey from another
@@ -141,6 +173,7 @@
 <script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/recovery.js"></script>
+<script src="/js/fund.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

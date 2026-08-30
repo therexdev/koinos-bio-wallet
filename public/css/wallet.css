@@ -147,3 +147,22 @@ footer {
 #view-recover textarea:focus { outline: none; border-color: var(--accent); }
 #recovery-banner { border-color: rgba(250,204,21,.5); }
 #recovery-banner .ghost { margin-left: 6px; }
+
+/* ─── fund with ETH/USDC/USDT ─── */
+.fund-net {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(96,165,250,.5); color: #60a5fa; margin-left: 6px;
+}
+.fund-addr { font-size: .82rem; }
+.fund-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; border-top: 1px solid var(--line); font-size: .95rem; flex-wrap: wrap;
+}
+.fund-row:first-child { border-top: 0; }
+.fund-via { color: var(--dim); font-size: .8rem; }
+.fund-spin {
+  display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -1px;
+  border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%;
+  animation: fundspin 0.9s linear infinite;
+}
+@keyframes fundspin { to { transform: rotate(360deg); } }

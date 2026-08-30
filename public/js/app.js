@@ -45,7 +45,8 @@
   const show = (view) => {
     for (const v of VIEWS) $(v).hidden = v !== view;
     $('#btn-signout').hidden = view !== '#view-wallet';
-    if (view === '#view-wallet') paint();
+    if (view === '#view-wallet') { paint(); Fund.refresh(); }
+    else Fund.stop();
     if (view === '#view-landing') refreshLandingSupport(); // support can change (recovery adds a passkey)
   };
 
@@ -403,6 +404,14 @@
     try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
     show('#view-landing');
     $('#alt-unlock').hidden = false;
+  });
+
+  /* ---------------- fund card ---------------- */
+  Fund.mount({
+    api,
+    signPrepared,
+    credentialId: () => (RECOVERY ? RECOVERY.credentialId : Passkey.storedId()),
+    onKoinMoved: paint,
   });
 
   /* ---------------- resume ---------------- */

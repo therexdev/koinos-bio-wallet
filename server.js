@@ -27,6 +27,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const chain = require('./tools/chain');
 const veive = require('./tools/veive');
+const funding = require('./tools/funding');
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
 const CFG = {
@@ -292,6 +293,7 @@ api.submit = async (body) => {
   if (known.demo) {
     if (known.smart) await demoCheckSmartSignature(body.transaction, known);
     const smart = known.register ? veive.addCredential(known.address, known.register) : undefined;
+    if (known.fundingTap) funding.onTapDone(known.fundingTap.account, known.fundingTap.step, known.txId);
     return { ok: true, demo: true, txid: known.txId, explorer: null, smart };
   }
   const txid = known.smart
@@ -300,6 +302,7 @@ api.submit = async (body) => {
   /* The register landed on-chain — mirror it into the store so sign-in and
      the submit allowlist recognize the new credential immediately. */
   const smart = known.register ? veive.addCredential(known.address, known.register) : undefined;
+  if (known.fundingTap) funding.onTapDone(known.fundingTap.account, known.fundingTap.step, txid);
   return { ok: true, txid, explorer: explorerTx(txid), smart };
 };
 
@@ -324,6 +327,67 @@ async function demoCheckSmartSignature(tx, known) {
     throw httpError(400, 'challenge does not commit to this transaction');
   }
 }
+
+/* ---------------- Fund with ETH / USDC / USDT ----------------
+   Each account gets a transit Ethereum deposit address; deposits are
+   swapped to KOIN through the better of the two Vortex routes, and the
+   PASSKEY signs the Koinos-side landing (see tools/funding.js). */
+
+function fundAccount(credentialId) {
+  const rec = veive.status(String(credentialId || ''));
+  if (!rec) throw httpError(404, 'no account for that passkey');
+  if (rec.step !== 'active') throw httpError(400, 'the account is still activating — try again in a minute');
+  return rec.address;
+}
+
+api.fundEnable = async (body, ip) => {
+  if (rateLimited('fund-enable:ip:' + ip, 6, 24 * 3600000)) throw httpError(429, 'too many funding setups from this connection today');
+  const account = fundAccount(body.credentialId);
+  return { ok: true, ...funding.enable(account) };
+};
+
+api.fundStatus = async (params) => {
+  const account = fundAccount(params.get('credentialId'));
+  return { ok: true, ...(await funding.status(account)) };
+};
+
+api.fundStart = async (body, ip) => {
+  const account = fundAccount(body.credentialId);
+  if (rateLimited('fund-start:addr:' + account, 8, 24 * 3600000)) throw httpError(429, 'that account started several swaps today — come back tomorrow');
+  try { return { ok: true, job: await funding.start(account, { asset: String(body.asset || '') }) }; }
+  catch (e) { throw httpError(400, e.message); }
+};
+
+api.fundResume = async (body) => {
+  const account = fundAccount(body.credentialId);
+  try { return { ok: true, job: funding.resume(account) }; }
+  catch (e) { throw httpError(400, e.message); }
+};
+
+api.fundReset = async (body) => {
+  const account = fundAccount(body.credentialId);
+  try { funding.reset(account); return { ok: true }; }
+  catch (e) { throw httpError(400, e.message); }
+};
+
+/** The passkey step: prepare the Koinos-side transaction the job is
+    waiting on (bridge redeem, or Route B's KoinDX swap). */
+api.fundPrepareStep = async (body) => {
+  const account = fundAccount(body.credentialId);
+  let tap;
+  try { tap = await funding.prepareTapOps(account); }
+  catch (e) { throw httpError(400, e.message); }
+  if (DEMO) {
+    const id = demoTxid();
+    const ref = rememberPrepared(id, account, { demo: true, smart: true, fundingTap: { account, step: tap.step } });
+    return { ok: true, demo: true, ref, tx: { id }, step: tap.step };
+  }
+  const sponsorMana = await chain.mana(chain.sponsorAddress());
+  if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
+  const tx = await chain.prepareUserTx(account, tap.ops, { rcLimit: tap.rcLimit });
+  const ref = rememberPrepared(tx.id, account, { smart: true, fundingTap: { account, step: tap.step } });
+  return { ok: true, ref, tx, step: tap.step };
+};
 
 api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });
 
@@ -412,11 +476,15 @@ function readBody(req, maxBytes = 64 * 1024) {
 const GET_ROUTES = {
   '/api/config': api.config, '/api/account': api.account,
   '/api/account-status': api.accountStatus, '/api/health': api.health,
+  '/api/fund/status': api.fundStatus,
 };
 const POST_ROUTES = {
   '/api/create-account': api.createAccount, '/api/whoami': api.whoami,
   '/api/prepare': api.prepare, '/api/prepare-register': api.prepareRegister,
   '/api/submit': api.submit,
+  '/api/fund/enable': api.fundEnable, '/api/fund/start': api.fundStart,
+  '/api/fund/prepare-step': api.fundPrepareStep,
+  '/api/fund/resume': api.fundResume, '/api/fund/reset': api.fundReset,
 };
 
 const server = http.createServer(async (req, res) => {
@@ -482,6 +550,11 @@ const server = http.createServer(async (req, res) => {
   }
   veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
   if (!DEMO) veive.reconcile();
+  /* The ETH funding rail runs live only on mainnet (the Vortex bridge and
+     Uniswap pools are mainnet); everywhere else it simulates. */
+  const fundingDemo = DEMO || CFG.network !== 'mainnet';
+  funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
+  console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   server.listen(CFG.port, () => {
     console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);

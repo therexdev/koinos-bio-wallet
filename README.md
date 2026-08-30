@@ -88,6 +88,41 @@ default 6) and rate-limited. The one truly fatal state left is losing every
 passkey **and** the kit at once. (The module also has `unregister` for
 retiring lost credentials — not yet surfaced in the UI.)
 
+## Fund with ETH · USDC · USDT
+
+Every account can mint a personal **Ethereum deposit address**. Send it ETH,
+USDC or USDT from any wallet or exchange, and one tap swaps the whole balance
+into KOIN on the smart account — through the better of the two routes ported
+from [Koinos Node Desktop](https://github.com/therexdev/Koinos-Node)'s
+Fund-node pipeline (every calldata builder is proven **byte-identical** to
+that battle-tested implementation: `node tests/eth-parity.test.js`):
+
+| route | path | notes |
+|---|---|---|
+| B | ETH → Vortex (vETH) → KoinDX vETH/KOIN → KOIN | the original path; shallow pool |
+| C | ETH → USDT → vKOIN (Uniswap v4) → Vortex 1:1 → KOIN | usually far more KOIN per ETH |
+
+USDC and USDT deposits ride Route C's tail (USDC adds one hop through the
+deepest stable pair on Ethereum). The server quotes both routes live, shows
+the comparison, and executes the winner. Amounts are capped while the rail is
+new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150).
+
+**How custody works here — stated plainly:** the deposit address is a
+*transit* address whose key the server holds (like the bootstrap key). The
+server drives the Ethereum legs; the KOIN **landing** — the Vortex bridge
+redeem, and Route B's KoinDX swap — mints to the smart account and is signed
+by the **passkey**, verified on-chain. So funds are custodial only while in
+transit, and land under passkey authority. Keep transit amounts modest.
+
+Stablecoin-only deposits need a little ETH for Ethereum gas; set
+`ETH_GAS_SPONSOR_KEY` (an Ethereum private key holding some ETH) and the app
+fronts the gas automatically (`ETH_GAS_TOPUP` per job), mana-sharer style.
+
+Jobs persist and resume across restarts; every swap carries an on-chain
+min-out; a mid-flow failure leaves funds in a plain ERC-20 the flow retries
+from. The rail runs live only on mainnet (`KOINOS_NETWORK=mainnet` with the
+chain configured) — everywhere else the card simulates.
+
 ## Honest mana economics
 
 | action | burns (≈) |
@@ -165,6 +200,12 @@ node server.js
 | `MIN_CREATE_MANA` | `120` | refuse signups when sponsor mana is below this |
 | `MAX_TRANSFERS_PER_DAY` | `30` | per-address daily transfer budget (per-IP is 2×) |
 | `MIN_SPONSOR_MANA` | `5` | refuse transfers when sponsor mana is below this |
+| `ETH_RPC` | *(public list)* | Ethereum RPC endpoint(s), comma-separated by priority |
+| `ETH_GAS_SPONSOR_KEY` | — | Ethereum key that fronts gas for stablecoin-only deposits (optional) |
+| `ETH_GAS_TOPUP` | `0.0015` | ETH fronted per job when gas is short |
+| `FUND_MAX_ETH` | `0.05` | per-swap ETH cap on the funding rail |
+| `FUND_MAX_STABLE` | `150` | per-swap USDC/USDT cap (USD) |
+| `FUND_SLIPPAGE_BPS` | `150` | slippage floor for every funding swap (1.5%) |
 | `DEMO_MODE` | — | `1` forces demo mode |
 
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
