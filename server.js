@@ -258,12 +258,15 @@ api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
   const smart = veive.status(params.get('credentialId')) || undefined;
-  if (DEMO) return { ok: true, demo: true, koin: 0, mana: 5, smart };
-  const [koin, mana] = await Promise.all([
+  if (DEMO) return { ok: true, demo: true, koin: 0, koinSats: '0', mana: 5, smart };
+  const [koin, koinSats, mana] = await Promise.all([
     chain.koinBalance(address).catch(() => 0),
+    /* The exact integer too: "Send all" has to name the whole balance to the
+       last satoshi, and a float cannot promise that. */
+    chain.koinBalanceSats(address).catch(() => '0'),
     chain.mana(address).catch(() => 0),
   ]);
-  return { ok: true, koin, mana, smart };
+  return { ok: true, koin, koinSats: String(koinSats), mana, smart };
 };
 
 /** Prepare the transaction that registers ONE more credential on the

@@ -15,6 +15,7 @@
   let CREDENTIALS = [];    // [{id, label, kind, ts}] — this account's keys
   let RECOVERY = null;     // {credentialId, privateKey} while in recovery mode
   let PENDING_BACKUP = null; // a captured-but-unregistered backup passkey
+  let BALANCE_SATS = '';   // the chain's own integer balance, for "Send all"
   let PENDING_KIT = null;    // a generated-but-unregistered recovery kit
   let POLL = null;
 
@@ -207,10 +208,12 @@
       const credParam = RECOVERY ? RECOVERY.credentialId : (Passkey.storedId() || '');
       const a = await api('/api/account?address=' + encodeURIComponent(ADDRESS)
         + '&credentialId=' + encodeURIComponent(credParam));
+      BALANCE_SATS = String(a.koinSats == null ? '' : a.koinSats);
       $('#bal').textContent = Number(a.koin || 0).toLocaleString('en-US', { maximumFractionDigits: 8 });
       $('#mana').textContent = Number(a.mana || 0).toFixed(2);
       takeSmart(a.smart);
     } catch (_) {
+      BALANCE_SATS = '';
       $('#bal').textContent = '—'; $('#mana').textContent = '—';
     }
   }
@@ -391,6 +394,57 @@
     } finally {
       btn.disabled = ACTIVE ? false : true;
     }
+  });
+
+  /* ---------------- scan a QR code ----------------
+     Typing an address by hand is how money goes to the wrong place. */
+  $('#btn-scan').addEventListener('click', async () => {
+    const btn = $('#btn-scan'), st = $('#send-status');
+    const say = (msg, cls) => { st.hidden = false; st.className = 'status' + (cls ? ' ' + cls : ''); st.textContent = msg; };
+    btn.disabled = true;
+    try {
+      const hit = await QR.scan();
+      if (!hit) return;                          // cancelled — say nothing
+      if (!QR.looksLikeAddress(hit.address)) {
+        return say('That code is not a Koinos address: ' + hit.address.slice(0, 42), 'err');
+      }
+      $('#send-to').value = hit.address;
+      /* A payment QR can carry the amount too; taking it saves retyping a
+         number that was already in the code. */
+      if (hit.amount) $('#send-amount').value = hit.amount;
+      say('Scanned ✓ ' + hit.address + (hit.amount ? ` · ${hit.amount} KOIN` : ''), 'ok');
+      ($('#send-amount').value ? $('#btn-send') : $('#send-amount')).focus();
+    } catch (e) {
+      say(e.message || 'Could not open the camera', 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /** The whole balance, to the satoshi.
+
+      Formatted from the chain's own integer rather than the displayed
+      number: a float rounds, and "all" that leaves dust behind — or asks for
+      more than exists — is not all. Mana is sponsored here, so nothing has
+      to be held back for a fee. */
+  function sendAllAmount() {
+    const sats = BigInt(/^\d+$/.test(BALANCE_SATS) ? BALANCE_SATS : '0');
+    if (sats <= 0n) return null;
+    const whole = sats / 100000000n;
+    const frac = String(sats % 100000000n).padStart(8, '0').replace(/0+$/, '');
+    return frac ? `${whole}.${frac}` : String(whole);
+  }
+
+  $('#btn-send-all').addEventListener('click', () => {
+    const st = $('#send-status');
+    const all = sendAllAmount();
+    if (!all) {
+      st.hidden = false; st.className = 'status err';
+      st.textContent = BALANCE_SATS === '' ? 'Balance is still loading — try again in a moment' : 'There is no KOIN in this account yet';
+      return;
+    }
+    $('#send-amount').value = all;
+    $('#send-to').value.trim() ? $('#btn-send').focus() : $('#send-to').focus();
   });
 
   $('#btn-signout').addEventListener('click', () => {

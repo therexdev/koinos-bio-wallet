@@ -102,7 +102,9 @@
     <div class="card">
       <div class="k">Send <span id="sym2">KOIN</span> <span class="free-chip">free — mana shared</span></div>
       <label>To address<input type="text" id="send-to" placeholder="1…" autocomplete="off" spellcheck="false"></label>
+      <button class="cta small ghost field-btn" id="btn-scan" type="button">📷 Scan QR code</button>
       <label>Amount<input type="text" id="send-amount" inputmode="decimal" placeholder="1.0" autocomplete="off"></label>
+      <button class="cta small ghost field-btn" id="btn-send-all" type="button">Send all</button>
       <div class="status" id="send-status" hidden></div>
       <button class="cta small" id="btn-send">Send</button>
     </div>
@@ -192,6 +194,7 @@
 <script src="/js/passkey.js"></script>
 <script src="/js/recovery.js"></script>
 <script src="/js/fund.js"></script>
+<script src="/js/qr.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

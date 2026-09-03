@@ -88,6 +88,22 @@ default 6) and rate-limited. The one truly fatal state left is losing every
 passkey **and** the kit at once. (The module also has `unregister` for
 retiring lost credentials — not yet surfaced in the UI.)
 
+## Sending
+
+The send card takes an address by hand, or by camera. **Scan QR code** opens
+the rear camera and fills the address in for you — reading a bare address, a
+`koinos:<address>?amount=…` payment URI (the amount comes across too), or an
+explorer link. Decoding uses the browser's native `BarcodeDetector` where it
+exists (Chrome/Android) and falls back to a vendored jsQR everywhere else;
+the fallback is 256KB, so it is fetched only when a scan actually needs it,
+never at page load. A code that is not a Koinos address is rejected at the
+camera rather than at the chain.
+
+**Send all** fills in the entire balance, formatted from the chain's own
+integer rather than the number on screen — a float rounds, and an "all" that
+leaves dust behind is not all. Nothing is held back for fees because the
+sponsor pays the mana.
+
 ## Fund with ETH · USDC · USDT
 
 Every account can mint a personal **Ethereum deposit address**. Send it ETH,
@@ -157,7 +173,7 @@ budgets, and a sponsor mana floor for sends.
 ```bash
 npm install
 npm start            # http://localhost:3000 — DEMO mode until configured
-npm test             # wire format, recovery kit, ETH parity, passkey pre-flight
+npm test             # wire format, recovery kit, ETH parity, pre-flight, gifts, send helpers
 ```
 
 Demo mode is fully interactive: the passkey ceremonies and signature packing

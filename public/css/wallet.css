@@ -206,3 +206,35 @@ footer {
   border: 1px solid rgba(250,204,21,.5); border-radius: 10px; padding: 9px 12px;
   font-size: .84rem; color: #facc15; margin: 2px 0 8px;
 }
+
+
+/* ---------------- scan QR + send all ---------------- */
+
+/* Buttons that belong to the field above them, not to the card's actions.
+   They sit tight under their input, sized to their label — full width would
+   read as a primary action competing with Send. (.cta.small sets width:100%,
+   so this needs to match its specificity to win.) */
+.cta.field-btn {
+  width: auto; margin: -4px 0 12px; padding: 8px 14px;
+  font-size: .88rem; border-radius: 10px;
+}
+
+.qr-overlay {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: rgba(6, 4, 14, .82); backdrop-filter: blur(4px); padding: 18px;
+}
+.qr-sheet {
+  width: min(440px, 100%); background: var(--card); border: 1px solid var(--line);
+  border-radius: 16px; padding: 16px; display: grid; gap: 10px; justify-items: stretch;
+}
+.qr-head { font-weight: 700; color: var(--bright); text-align: center; }
+.qr-stage { position: relative; border-radius: 12px; overflow: hidden; background: #000; aspect-ratio: 1; }
+.qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A frame to aim with — the code does not have to fill it, it just tells
+   people where to point. */
+.qr-frame {
+  position: absolute; inset: 14%; border-radius: 12px; pointer-events: none;
+  border: 2px solid rgba(167, 139, 250, .9);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .35);
+}
+.qr-note { color: var(--dim); font-size: .85rem; text-align: center; margin: 0; }
