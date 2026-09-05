@@ -1,4 +1,7 @@
-/* Route S — SOL → vKOIN (Solana) → Wormhole → Ethereum → Vortex → KOIN.
+/* The Solana rail — two routes home for a SOL deposit.
+
+     S: SOL → vKOIN (Solana) → Wormhole → Ethereum → Vortex → KOIN
+     T: SOL → wETH (Solana) → Wormhole (unwraps to ether) → Route C → KOIN
 
    Nothing here touches a network. What is pinned:
      1. the SOL maths: reserve, minimum and cap on what may move;
@@ -46,8 +49,8 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     funding.configure({ dataDir: fresh(), demo: true, network: "mainnet" });
     const sp = (sol) => funding._spendableOf("sol", { solLamports: SU.parseSol(sol).toString() });
     assert.strictEqual((await sp("0.005")).sats, 0n, "below the reserve nothing moves");
-    assert.strictEqual((await sp("0.025")).sats, 0n, "reserve taken, what is left is under the minimum → nothing");
-    assert.strictEqual((await sp("0.03")).label, "0.02", "reserve 0.01 off the top, the minimum exactly");
+    assert.strictEqual((await sp("0.04")).sats, 0n, "reserve taken, what is left is under the minimum → nothing");
+    assert.strictEqual((await sp("0.06")).label, "0.05", "reserve 0.01 off the top, the minimum exactly");
     assert.strictEqual((await sp("1")).label, "0.5", "the cap holds");
     assert.strictEqual((await funding._spendableOf("sol", {})).sats, 0n, "no Solana balance read → nothing, not a crash");
     console.log("✓ SOL spendable: reserve, minimum and cap");
@@ -61,6 +64,7 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.strictEqual(url.searchParams.get("amount"), "200000000");
     assert.strictEqual(url.searchParams.get("slippageBps"), "150");
     assert.strictEqual(url.searchParams.get("restrictIntermediateTokens"), "true");
+    assert.strictEqual(new URL(jup.quoteUrl({ amount: 1n, slippageBps: 150, outputMint: SC.WETH_SOL_MINT })).searchParams.get("outputMint"), SC.WETH_SOL_MINT, "route T asks Jupiter for wETH");
     const q = jup.parseQuote({ inAmount: "200000000", outAmount: "6600000000", otherAmountThreshold: "6501000000", priceImpactPct: "0.0123", routePlan: [{ swapInfo: { label: "Raydium" } }, { swapInfo: { label: "Raydium" } }] });
     assert.deepStrictEqual([q.outAmount, q.outAmountMin, q.priceImpactPct, q.via], ["6600000000", "6501000000", 1.23, ["Raydium"]]);
     assert.throws(() => jup.parseQuote({ outAmount: "0" }), /no route/, "a zero quote is refused, not swapped");
@@ -115,6 +119,28 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     const [decoded] = new ethers.Interface(SC.ETH_TOKEN_BRIDGE_ABI).decodeFunctionData("completeTransfer", tx.data);
     assert.strictEqual(decoded, hex, "the VAA rides in whole");
     console.log("✓ Wormhole VAA decode, recipient/token checks, double-keccak, completeTransfer calldata");
+
+    /* --- route T: the same VAA shape, carrying wETH, redeemed as ether --- */
+    const wethVaa = connect.createVAA("TokenBridge:Transfer", {
+      guardianSet: 4, timestamp: 1700000000, nonce: 0, emitterChain: "Solana",
+      emitterAddress: new connect.UniversalAddress("0x" + "ec".repeat(32)), sequence: 99n, consistencyLevel: 32, signatures: [],
+      payload: {
+        token: { amount: 4000000n, address: wormhole.universalEth(connect, SC.WETH_ETH), chain: "Ethereum" },
+        to: { address: wormhole.universalEth(connect, transit), chain: "Ethereum" }, fee: 0n,
+      },
+    });
+    const wethHex = ethers.hexlify(connect.serialize(wethVaa));
+    const wp = await wormhole.parseTransferVaa(wethHex, { expectRecipient: transit, expectToken: SC.WETH_ETH });
+    assert.strictEqual(wp.token.toLowerCase(), SC.WETH_ETH.toLowerCase());
+    assert.strictEqual(wp.amount, "4000000", "0.04 ETH at Wormhole's 8 decimals");
+    await assert.rejects(wormhole.parseTransferVaa(wethHex, { expectRecipient: transit }), /not a vKOIN transfer/,
+      "a wETH VAA is refused where vKOIN is expected — the two must not cross wires");
+    await assert.rejects(wormhole.parseTransferVaa(hex, { expectRecipient: transit, expectToken: SC.WETH_ETH }), /not a wETH transfer/);
+    const utx = wormhole.buildCompleteTransferTx(wethHex, { unwrap: true });
+    assert.strictEqual(utx.data.slice(0, 10), ethers.id("completeTransferAndUnwrapETH(bytes)").slice(0, 10),
+      "route T redeems through the unwrapping call, so NATIVE ether arrives");
+    assert.notStrictEqual(utx.data.slice(0, 10), tx.data.slice(0, 10));
+    console.log("✓ route T: a wETH VAA, checked apart from vKOIN, redeemed with completeTransferAndUnwrapETH");
   }
 
   /* --- 3b. the Solana account helpers --- */
@@ -149,23 +175,48 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.strictEqual(st.caps.sol, "0.5");
     assert.strictEqual(st.balances.sol, "0.35");
     assert.strictEqual(st.spendable.sol, "0.34", "0.35 less the 0.01 reserve");
-    assert.strictEqual(st.quotes.sol.best.id, "S", "one route, and it is the best");
-    assert.ok(st.quotes.sol.best.steps.some((s) => /Wormhole/.test(s)) && st.quotes.sol.best.steps.some((s) => /Vortex/.test(s)));
-    await assert.rejects(funding.quoteFor(ACCT, "sol", "0.01"), /Minimum is 0.02 SOL/);
+
+    /* Both routes are quoted, and the one that pays its own way and buys from
+       the deeper pool wins — which is the whole reason route T exists. */
+    const sq = st.quotes.sol;
+    assert.deepStrictEqual(sq.routes.map((r) => r.id).sort(), ["S", "T"], "both SOL routes are offered");
+    assert.strictEqual(sq.best.id, "T", "route T lands more KOIN");
+    const byId = Object.fromEntries(sq.routes.map((r) => [r.id, r]));
+    assert.ok(BigInt(byId.T.koinOut) > BigInt(byId.S.koinOut));
+    assert.ok(byId.T.steps.some((x) => /Wormhole/.test(x)) && byId.T.steps.some((x) => /Uniswap/.test(x)) && byId.T.steps.some((x) => /Vortex/.test(x)));
+    assert.ok(byId.T.feeEth && byId.S.feeEth, "each route says what its network fees cost");
+    /* No sponsor key is set in this process, so neither route may claim the
+       platform is paying. The card states the payer; it never assumes one. */
+    assert.strictEqual(byId.S.feePaidBy, "deposit", "with no sponsor, route S's gas comes out of the deposit");
+    assert.strictEqual(byId.T.feePaidBy, "deposit");
+
+    await assert.rejects(funding.quoteFor(ACCT, "sol", "0.01"), /Minimum is 0.05 SOL/);
     await assert.rejects(funding.quoteFor(ACCT, "sol", "0.5"), /Max right now is 0.34 SOL/);
-    await assert.rejects(funding.start(ACCT, { asset: "sol", amount: "0.019" }), /Minimum/);
+    await assert.rejects(funding.start(ACCT, { asset: "sol", amount: "0.04" }), /Minimum/);
+
+    /* Default: the best route, and it walks the whole Ethereum tail. */
     const j0 = await funding.start(ACCT, { asset: "sol", amount: "0.2" });
-    assert.strictEqual(j0.route, "S"); assert.strictEqual(j0.status, "sol_swap");
+    assert.strictEqual(j0.route, "T"); assert.strictEqual(j0.status, "sol_swap");
     assert.strictEqual(j0.solFrom, en.solAddress);
     assert.strictEqual(j0.amountLabel, "0.2 SOL");
+    assert.ok(j0.estFeeEth, "the job records what it expects to pay in fees");
     const seen = [j0.status];
-    for (let i = 0; i < 12 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seen.push(funding.job(ACCT).status); }
-    assert.deepStrictEqual(seen, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
-      "every state of the route, in order, no passkey tap needed");
+    for (let i = 0; i < 16 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seen.push(funding.job(ACCT).status); }
+    assert.deepStrictEqual(seen, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
+      "route T: Solana legs, the Wormhole redeem, then Route C's tail — no passkey tap needed");
     const done = funding.job(ACCT);
     assert.strictEqual(done.koinReceived, done.estKoinOut);
     assert.strictEqual((await funding.status(ACCT)).balances.sol, "0.15", "the swapped SOL left the deposit address");
-    console.log("✓ demo: a SOL job walks sol_swap → … → done, and the balance follows");
+
+    /* Asking for route S explicitly still works, and takes the short way. */
+    funding.reset(ACCT);
+    const j1 = await funding.start(ACCT, { asset: "sol", amount: "0.1", route: "S" });
+    assert.strictEqual(j1.route, "S");
+    const seenS = [j1.status];
+    for (let i = 0; i < 12 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seenS.push(funding.job(ACCT).status); }
+    assert.deepStrictEqual(seenS, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
+      "route S skips the Ethereum swaps: its vKOIN goes straight to Vortex");
+    console.log("✓ demo: route T wins on price and walks its full flow; route S still runs when asked");
   }
 
   /* --- 5. where is the money (route S) --- */
@@ -179,12 +230,13 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
         ethVkoin: async () => { calls.push("ethVkoin"); return BigInt(facts.ethVkoin || 0); },
         vaaRedeemed: async () => { calls.push("vaaRedeemed"); return !!facts.vaaRedeemed; },
         sigConfirmed: async (sig) => { calls.push("sig:" + sig); return !!(facts.confirmed || {})[sig]; },
-        solVkoin: async () => { calls.push("solVkoin"); return BigInt(facts.solVkoin || 0); },
+        solToken: async () => { calls.push("solToken"); return BigInt(facts.solToken || 0); },
         recentTransfer: async () => { calls.push("recentTransfer"); return facts.recent || null; },
       };
       return { P, calls };
     };
     const base = { route: "S", asset: "sol", status: "sol_swap", startedAt: 1 };
+    const baseT = { ...base, route: "T" };
     const ask = async (job, facts) => { const { P, calls } = probe(facts); const at = await funding._reconcileRouteS(ACCT, { ...base, ...job }, P); return { at, calls }; };
 
     let r = await ask({ status: "sol_bridge", pendingSig: "s1" }, { ethVkoin: 500 });
@@ -201,8 +253,8 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     r = await ask({ status: "sol_bridge", pendingSig: "b1", solBridgeSig: "b1" }, { confirmed: { b1: true } });
     assert.deepStrictEqual(r.at, { status: "awaiting_vaa", pendingSig: null }, "a confirmed bridge send moves on to the guardians");
 
-    r = await ask({ status: "sol_swap", pendingSig: "s1" }, { solVkoin: 700 });
-    assert.deepStrictEqual(r.at, { status: "sol_bridge", solVkoinSats: "700", pendingSig: null }, "vKOIN on Solana: the swap landed, bridge it — all of it");
+    r = await ask({ status: "sol_swap", pendingSig: "s1" }, { solToken: 700 });
+    assert.deepStrictEqual(r.at, { status: "sol_bridge", solTokenSats: "700", pendingSig: null }, "vKOIN on Solana: the swap landed, bridge it — all of it");
 
     r = await ask({ status: "error", failedAt: "sol_bridge" }, { recent: { txid: "T", emitter: "ee", sequence: "12" } });
     assert.strictEqual(r.at.status, "awaiting_vaa");
@@ -219,7 +271,16 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     r = await ask({ status: "sol_swap" }, {});
     assert.strictEqual(r.at, null, "nothing moved: the record stands");
     r = await ask({ route: "C", status: "swap_eth_usdt" }, { ethVkoin: 5 });
-    assert.strictEqual(r.at, null, "not a route-S job");
+    assert.strictEqual(r.at, null, "not a Solana-funded job");
+
+    /* Route T: its delivery is ether, which the address may hold for other
+       reasons, so the vKOIN shortcut must not fire — the VAA decides. */
+    const askT = async (job, facts) => { const { P, calls } = probe(facts); const at = await funding._reconcileRouteS(ACCT, { ...baseT, ...job }, P); return { at, calls }; };
+    r = await askT({ status: "wh_redeem", vaa: "0x01", vaaEvmHash: "0x02" }, { ethVkoin: 500, vaaRedeemed: true });
+    assert.deepStrictEqual(r.at, { status: "wh_redeem", pendingTx: null }, "a redeemed route-T VAA goes back to wh_redeem, which hands off to Route C");
+    assert.ok(!r.calls.includes("ethVkoin"), "and never mistakes stray vKOIN for its own delivery");
+    r = await askT({ status: "sol_swap", pendingSig: "s1" }, { solToken: 700 });
+    assert.deepStrictEqual(r.at, { status: "sol_bridge", solTokenSats: "700", pendingSig: null }, "wETH on Solana means the swap landed");
     r = await ask({ status: "awaiting_signatures", ethTxHash: "0x1" }, { ethVkoin: 5 });
     assert.strictEqual(r.at, null, "already in Vortex: the balances say nothing");
     console.log("✓ reconcileRouteS: Ethereum, then the VAA, then Solana — reading no further than it must");
@@ -240,6 +301,24 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.ok(!("vaa" in pub) && !("record" in pub) && pub.vaaEvmHash === "0x1" && pub.recordAmount === "5", "the VAA bytes and the record stay on the server");
     assert.strictEqual(routes.descriptor("S").steps.length, 3);
     console.log("✓ boot-time repair of a demo-marked SOL job; the public job carries no VAA");
+  }
+
+  /* --- 6b. the gas decision for a Solana job's Ethereum tail --- */
+  {
+    funding.configure({ dataDir: fresh(), demo: true, network: "mainnet" });
+    const { ethers: E } = require("ethers");
+    const enough = E.parseEther("0.01"), dust = E.parseEther("0.0001");
+    assert.deepStrictEqual(funding._gasDecision({}, "approve_bridge", enough, false, "0.0012"), { status: "approve_bridge" },
+      "the address can pay: straight on, no top-up and no sponsor needed");
+    assert.deepStrictEqual(funding._gasDecision({}, "approve_bridge", dust, true, "0.0012"),
+      { status: "front_gas", afterGas: "approve_bridge", gasFronts: 1 }, "short, with a sponsor: front it once");
+    assert.deepStrictEqual(funding._gasDecision({ gasFronts: 1 }, "approve_bridge", dust, true, "0.0012"),
+      { status: "front_gas", afterGas: "approve_bridge", gasFronts: 2 }, "a lagging balance read gets one more");
+    assert.throws(() => funding._gasDecision({ gasFronts: 2 }, "approve_bridge", dust, true, "0.0012"), /fronted twice/,
+      "but never without bound — a top-up below the minimum would drain the sponsor");
+    assert.throws(() => funding._gasDecision({}, "approve_bridge", dust, false, "0.0012"), /send a little ETH there/,
+      "and with no sponsor it says what the person can do about it");
+    console.log("✓ the Ethereum-tail gas decision: pay, front once, front twice, then stop");
   }
 
   /* --- 7. Retry starts its leg clean --- */

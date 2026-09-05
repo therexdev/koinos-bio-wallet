@@ -505,6 +505,7 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .fund-worse { color: var(--dim); font: 500 12px/16px var(--font); margin-left: 6px; }
 .fund-min { display: block; color: var(--dim); font: 500 12px/16px var(--font); }
 .fund-impact { display: block; color: var(--dim); font: 500 12px/16px var(--font); }
+.fund-fee { display: block; color: var(--dim); font: 500 12px/16px var(--font); }
 .fund-impact.warn { color: var(--warn); }
 .fund-unavail { color: var(--bad); font: 500 13px/18px var(--font); margin-top: 4px; }
 .fund-gaswarn { border: 1px solid rgba(251, 191, 36, .5); border-radius: var(--r-m); padding: 9px 12px; font: 500 13px/18px var(--font); color: var(--warn); margin: 2px 0 8px; }

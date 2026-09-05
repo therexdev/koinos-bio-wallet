@@ -140,7 +140,7 @@ async function fetchVaa({ emitter, sequence, fetch: fetchImpl = globalThis.fetch
     hash the Ethereum bridge keys completed transfers on (keccak256 of the
     body hash — the EVM core bridge double-hashes; the SDK's own EVM module
     does exactly this) and the transfer's fields. */
-async function parseTransferVaa(hex, { expectRecipient } = {}) {
+async function parseTransferVaa(hex, { expectRecipient, expectToken = C.VKOIN_ETH } = {}) {
   const { connect } = await loadSdk();
   const vaa = connect.deserialize("TokenBridge:Transfer", ethers.getBytes(hex));
   const to = vaa.payload.to;
@@ -157,8 +157,8 @@ async function parseTransferVaa(hex, { expectRecipient } = {}) {
   };
   if (out.emitterChain !== "Solana") throw new Error(`Wormhole VAA was emitted on ${out.emitterChain}, not Solana`);
   if (out.toChain !== "Ethereum") throw new Error(`Wormhole VAA is for ${out.toChain}, not Ethereum`);
-  if (out.tokenChain !== "Ethereum" || out.token.toLowerCase() !== C.VKOIN_ETH.toLowerCase()) {
-    throw new Error("Wormhole VAA is not a vKOIN transfer");
+  if (out.tokenChain !== "Ethereum" || out.token.toLowerCase() !== String(expectToken).toLowerCase()) {
+    throw new Error(`Wormhole VAA is not a ${expectToken.toLowerCase() === C.WETH_ETH.toLowerCase() ? "wETH" : "vKOIN"} transfer`);
   }
   if (expectRecipient && out.to !== String(expectRecipient).toLowerCase()) {
     throw new Error("Wormhole VAA names a different recipient than the deposit address");
@@ -172,11 +172,20 @@ async function isRedeemedOnEthereum(provider, evmHash) {
   return !!(await c.isTransferCompleted(evmHash));
 }
 
-/** The Ethereum transaction that releases the vKOIN: completeTransfer(vaa).
-    Shaped for eth-swap-exec's sendTx. */
-function buildCompleteTransferTx(vaaHex) {
+/** The Ethereum transaction that releases what the VAA holds. Shaped for
+    eth-swap-exec's sendTx.
+
+    `unwrap` is for a wETH transfer: completeTransferAndUnwrapETH hands the
+    recipient NATIVE ether instead of the WETH ERC-20, which is what lets a
+    Solana deposit pay its own Ethereum gas.
+
+    Either call may be submitted by ANYONE — the recipient is sealed in the
+    guardian-signed VAA and the caller cannot redirect it. That is why the
+    sponsor submits this step: the transit address needs no ether first. */
+function buildCompleteTransferTx(vaaHex, { unwrap = false } = {}) {
   const iface = new ethers.Interface(C.ETH_TOKEN_BRIDGE_ABI);
-  return { to: C.WORMHOLE.ethTokenBridge, data: iface.encodeFunctionData("completeTransfer", [vaaHex]), value: 0n };
+  const fn = unwrap ? "completeTransferAndUnwrapETH" : "completeTransfer";
+  return { to: C.WORMHOLE.ethTokenBridge, data: iface.encodeFunctionData(fn, [vaaHex]), value: 0n };
 }
 
 module.exports = {

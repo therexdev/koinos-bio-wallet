@@ -38,17 +38,23 @@ const Fund = (() => {
     approve_bridge: 'Approving the Vortex bridge…',
     bridge_token: 'Bridging vKOIN → Koinos (Vortex, 1:1)…',
     deposit_eth: 'Depositing ETH into the Vortex bridge…',
-    /* Route S */
-    sol_swap: 'Swapping SOL → vKOIN on Solana (Jupiter)…',
-    sol_bridge: 'Sending vKOIN across Wormhole to Ethereum…',
+    /* The Solana routes (S and T) — see stepLabel for the wording, which
+       depends on what the SOL was swapped into. */
     awaiting_vaa: 'Wormhole guardians are signing (usually 1–2 minutes)…',
-    wh_redeem: 'Receiving the vKOIN on Ethereum…',
     awaiting_signatures: 'Bridge guardians are signing (usually 2–3 minutes)…',
     awaiting_redeem: 'Landing your KOIN on your account…',
     /* awaiting_redeem normally completes on its own; it only asks for a tap
        if the chain refused the sponsor-submitted redeem (see needsTap). */
     awaiting_swap: 'vETH arrived — one more tap swaps it to KOIN.',
   };
+
+  /* Route T carries the deposit as ETH so it can pay its own Ethereum gas;
+     route S carries it as vKOIN. Same steps, different cargo. */
+  const SOL_STEPS = {
+    S: { sol_swap: 'Swapping SOL → vKOIN on Solana (Jupiter)…', sol_bridge: 'Sending vKOIN across Wormhole to Ethereum…', wh_redeem: 'Receiving the vKOIN on Ethereum…' },
+    T: { sol_swap: 'Swapping SOL → ETH on Solana (Jupiter)…', sol_bridge: 'Sending ETH across Wormhole to Ethereum…', wh_redeem: 'Receiving your ETH on Ethereum…' },
+  };
+  const stepLabel = (j) => (SOL_STEPS[j.route] && SOL_STEPS[j.route][j.status]) || STEP_LABEL[j.status] || j.status;
 
   const needsTap = (j) => j.status === 'awaiting_redeem' && !!j.needsTap;
 
@@ -191,6 +197,16 @@ const Fund = (() => {
       /* A shallow pool moves a lot for a little — say so before the tap,
          not after: the trade is priced with the impact in, and a smaller
          amount keeps more of it. */
+      /* What the network takes, and out of whose pocket — the difference
+         between the two SOL routes is mostly this. */
+      const PAYER = {
+        platform: ' — we cover these',
+        deposit: ' — paid out of your deposit',
+        'deposit-and-platform': ' — from your deposit; we cover the bridge redeem',
+      };
+      const fee = r.feeEth
+        ? `<span class="fund-fee">network fees ≈ ${esc(Number(r.feeEth).toFixed(4))} ETH${PAYER[r.feePaidBy] || ''}</span>`
+        : '';
       const pi = Number(r.priceImpactPct);
       const impact = r.priceImpactPct != null && isFinite(pi)
         ? `<span class="fund-impact${pi >= 5 ? ' warn' : ''}">price impact ${pi < 0.01 ? '<0.01' : pi.toFixed(2)}%${pi >= 5 ? ' — the pool is shallow; a smaller amount loses less' : ''}</span>`
@@ -200,7 +216,7 @@ const Fund = (() => {
         `<div class="fund-route-head">${head}` +
         `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}">${btnLabel}</button></div>` +
         steps +
-        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}</div>` +
+        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}${fee}</div>` +
         `</div>`;
     }).join('');
   }
@@ -330,6 +346,7 @@ const Fund = (() => {
           strip.push(`<span>SOL <strong>${f(b.sol, 4)}</strong>${stuck ? ` · needs ${esc(st.solFloor)} to convert` : ''}</span>`);
           /* vKOIN on Solana exists only mid-route; shown while it does. */
           if (Number(b.solVkoin) > 0) strip.push(`<span>vKOIN·Solana <strong>${f(b.solVkoin, 2)}</strong></span>`);
+          if (Number(b.solWeth) > 0) strip.push(`<span>ETH·Solana <strong>${f(b.solWeth, 5)}</strong></span>`);
         } else if (b.solError) {
           strip.push('<span>Solana balance unavailable right now</span>');
         }
@@ -378,6 +395,8 @@ const Fund = (() => {
        is never clobbered by the poll) */
     const assets = $('#fund-assets');
     if (!jobActive && b && st.spendable && st.accountActive !== false) {
+      /* With a sponsor the platform covers the one step the deposit cannot,
+         so a SOL-only deposit needs nothing from the user. */
       const lowGas = !st.gasFronting && Number(b.eth) < Number(st.gasMinEth || 0.0012);
       const panels = [];
       for (const asset of ['eth', 'usdc', 'usdt', 'sol']) {
@@ -397,7 +416,7 @@ const Fund = (() => {
           `<button class="ghost" data-max>Max</button></div>` +
           `<div data-routes>${q ? routesHtml(asset, q) : '<div class="hint">Pricing routes…</div>'}</div>` +
           (asset === 'sol' && lowGas
-            ? `<div class="fund-gaswarn">⚠ This route finishes on Ethereum (Wormhole → Vortex), and your Ethereum deposit address holds almost no ETH — it needs ~${esc(st.gasMinEth)} ETH for gas. Send a little ETH there first.</div>`
+            ? `<div class="fund-gaswarn">⚠ This route finishes on Ethereum, and the first step there has to be paid for before your deposit has any ETH of its own. Send about ${esc(st.gasMinEth)} ETH to your Ethereum deposit address first.</div>`
             : asset !== 'eth' && lowGas
             ? `<div class="fund-gaswarn">⚠ This address holds almost no ETH — swaps need ~${esc(st.gasMinEth)} ETH for Ethereum gas. Send a little ETH along with your ${SYM[asset]}.</div>`
             : '') +
@@ -418,7 +437,7 @@ const Fund = (() => {
       const label = j.status === 'done' ? `🎉 Landed ${j.koinReceived ? koin(j.koinReceived) + ' ' : ''}KOIN on your account!`
         : j.status === 'error' ? 'Swap hit a snag: ' + (j.error || 'unknown error')
         : needsTap(j) ? 'Your KOIN is ready to land!'
-        : (STEP_LABEL[j.status] || j.status);
+        : stepLabel(j);
       $('#fund-job-label').textContent = label;
       $('#fund-job-sub').textContent = jobActive && j.estKoinOut
         ? `${j.amountLabel || ''} → ≈ ${koin(j.estKoinOut)} KOIN · route ${j.route}`

@@ -6,8 +6,12 @@
 //   Route B: ETH → Vortex (vETH) → KoinDX (vETH/KOIN) → KOIN
 //   Route C: ETH → USDT → vKOIN (Uniswap v4) → Vortex → KOIN
 //   Route S: SOL → vKOIN on Solana (Jupiter) → Wormhole → Ethereum → Vortex → KOIN
-//            (the only route for SOL today; more can be added beside it and
-//            compareRoutes will rank them the same way)
+//   Route T: SOL → wETH on Solana (Jupiter) → Wormhole (unwraps to native ETH)
+//            → Route C's tail on Ethereum → Vortex → KOIN
+//
+// The SOL routes are ranked on what LANDS: koinOut here is already net of the
+// network fees the conversion burns (see quoteFor), so a route that cannot pay
+// its own gas is not flattered by leaving that cost out.
 //
 // This file is PURE (no network): callers quote each route however they like and
 // pass the results in. Keeping the ranking pure makes it trivially testable and
@@ -32,7 +36,13 @@ const ROUTES = {
     id: "S",
     label: "Swap SOL to vKOIN, bridge it home",
     steps: ["Swap SOL → vKOIN (Jupiter)", "Bridge vKOIN Solana → Ethereum (Wormhole)", "Bridge vKOIN → KOIN (Vortex, 1:1)"],
-    note: "vKOIN on Solana is Wormhole-wrapped Vortex Koin, so it goes back to Ethereum and through Vortex like every other route.",
+    note: "Buys vKOIN from the small Solana pool. Short, but the price moves against you quickly and it cannot pay its own Ethereum gas.",
+  },
+  T: {
+    id: "T",
+    label: "Swap SOL to ETH, bridge, then Route C",
+    steps: ["Swap SOL → ETH (Jupiter)", "Bridge ETH Solana → Ethereum (Wormhole)", "Swap ETH → USDT → vKOIN (Uniswap)", "Bridge vKOIN → KOIN (Vortex, 1:1)"],
+    note: "Arrives as real ether, so the deposit pays its own Ethereum gas, and it buys vKOIN from the far deeper Uniswap pool.",
   },
 };
 

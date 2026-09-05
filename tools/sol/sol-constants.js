@@ -19,6 +19,16 @@ const VKOIN_ETH = "0xa50ad3a559A10f384a5bB2e27516f63E0B937b1A";
 /** vKOIN on Solana — Wormhole-wrapped Vortex Koin. 8 decimals, like vKOIN. */
 const VKOIN_SOL_MINT = "8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G";
 const VKOIN_SOL_DECIMALS = 8;
+/** Wormhole-wrapped ETH on Solana ("ETH (Portal)") — the wrapped-asset
+    account for Ethereum's WETH contract, derived the same way as vKOIN
+    above and checked against the known mint on 2026-09-05. Route T buys
+    THIS with the SOL, because bridging it back to Ethereum unwraps into
+    native ETH, which is what pays for the Ethereum legs that follow. */
+const WETH_SOL_MINT = "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs";
+const WETH_SOL_DECIMALS = 8; // Wormhole wraps at min(origin, 8) decimals
+/** WETH on Ethereum — what the Wormhole VAA names as the token. */
+const WETH_ETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
 /** Native SOL as Jupiter's input mint (the wrapped-SOL mint). */
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 const SOL_DECIMALS = 9;
@@ -38,6 +48,9 @@ const WORMHOLE = {
 /** The two Ethereum token-bridge calls the rail makes. */
 const ETH_TOKEN_BRIDGE_ABI = [
   "function completeTransfer(bytes encodedVm)",
+  /* Only for a transfer whose token IS WETH: releases it and unwraps, so
+     the recipient receives NATIVE ether — the gas for the legs after it. */
+  "function completeTransferAndUnwrapETH(bytes encodedVm)",
   "function isTransferCompleted(bytes32 hash) view returns (bool)",
 ];
 
@@ -58,6 +71,6 @@ function solanaRpcCandidates() {
 const SOLANA_MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
 module.exports = {
-  VKOIN_ETH, VKOIN_SOL_MINT, VKOIN_SOL_DECIMALS, WSOL_MINT, SOL_DECIMALS, LAMPORTS_PER_SOL,
+  VKOIN_ETH, VKOIN_SOL_MINT, WETH_SOL_MINT, WETH_SOL_DECIMALS, WETH_ETH, VKOIN_SOL_DECIMALS, WSOL_MINT, SOL_DECIMALS, LAMPORTS_PER_SOL,
   WORMHOLE, ETH_TOKEN_BRIDGE_ABI, JUPITER, solanaRpcCandidates, SOLANA_MAINNET_GENESIS,
 };

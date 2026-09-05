@@ -118,7 +118,8 @@ that battle-tested implementation: `node tests/eth-parity.test.js`):
 |---|---|---|
 | B | ETH → Vortex (vETH) → KoinDX vETH/KOIN → KOIN | the original path; shallow pool |
 | C | ETH → USDT → vKOIN (Uniswap v4) → Vortex 1:1 → KOIN | usually far more KOIN per ETH |
-| S | SOL → vKOIN on Solana (Jupiter) → Wormhole → Ethereum → Vortex 1:1 → KOIN | the only SOL route today |
+| S | SOL → vKOIN on Solana (Jupiter) → Wormhole → Ethereum → Vortex 1:1 → KOIN | short, but a small pool and it cannot pay its own gas |
+| T | SOL → wETH on Solana (Jupiter) → Wormhole (unwraps to ether) → Route C's tail → KOIN | usually the best SOL route |
 
 USDC and USDT deposits ride Route C's tail (USDC adds one hop through the
 deepest stable pair on Ethereum). The server quotes every route live, shows
@@ -128,25 +129,41 @@ are new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150, `FUND_MAX_SOL` 0.5).
 **Why SOL goes through Ethereum.** The vKOIN that trades on Solana (mint
 `8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G`, the Raydium KOIN/SOL pair) is
 Vortex Koin **wrapped by Wormhole** — the mint is exactly the Wormhole token
-bridge's wrapped-asset account for the Ethereum vKOIN contract, and the
-Vortex bridge has no Solana side. So the only way it becomes native KOIN is
-the way it came: Jupiter swaps SOL to vKOIN on Solana, the Wormhole token
-bridge burns it there and the guardians sign a VAA, the Ethereum token bridge
-releases the original vKOIN to the account's Ethereum deposit address, and
-from there it joins Route C's tail (approve, Vortex transfer, guardian
-signatures, sponsor redeem). The Wormhole VAA names the recipient, so like
-the Vortex record it can only ever deliver to our transit address. Because
-the route finishes on Ethereum it needs Ethereum gas there — fronted by
-`ETH_GAS_SPONSOR_KEY` when set, otherwise the card asks for a little ETH at
-the Ethereum deposit address before any SOL moves. The Solana side keeps a
-small reserve (`SOL_RESERVE` 0.01) for fees and account rent and refuses
-trades under `FUND_MIN_SOL` (0.02); Jupiter's quote carries the price
-impact, and the card says so when the pool is shallow. Each Solana leg is one
-transaction tracked by its signature across restarts, and a job that lost a
-reply is put back where the chains say it is (`node tests/sol-rail.test.js`).
-The Solana packages (`@solana/web3.js` and four `@wormhole-foundation/*`
-modules) are optional at boot: without them the rail reports itself off and
-everything else runs as before.
+bridge's wrapped-asset account for the Ethereum vKOIN contract (derive it and
+see), and the Vortex bridge has no Solana side: its own interface offers
+Koinos and Ethereum only. So a Solana deposit always comes home the way the
+token came: across Wormhole to Ethereum, then through Vortex.
+
+**Which leaves the fees, which the platform has to solve.** The route ends on
+Ethereum, so somebody must pay Ethereum gas, and a person who deposited only
+SOL has none. That is what Route T is for: it buys **wETH** instead of vKOIN,
+and Wormhole's `completeTransferAndUnwrapETH` hands the deposit address
+**native ether** — so the deposit pays for its own Ethereum legs, and it buys
+its vKOIN from the deep Uniswap pool instead of the small Solana one. It wins
+on both counts, which is why it is normally the best route; Route S stays
+quoted beside it and is still chosen when it actually wins.
+
+One transaction cannot be paid for out of the deposit: the redeem itself,
+which is what creates the ether. A Wormhole VAA names its recipient, so
+**anyone may submit it** and the money still lands where the guardians said —
+so the sponsor (`ETH_GAS_SPONSOR_KEY`) submits that one transaction per job,
+and Route T pays for everything after it. Without a sponsor the rail asks for
+about `ETH_GAS_MIN` of ETH at the Ethereum deposit address instead, and says
+so before any SOL moves rather than after.
+
+Both routes are quoted **net of every network fee they cause**, whichever
+side pays it, so the router can never prefer a route merely because the
+platform is subsidising it — the mistake that would send every small deposit
+down the expensive path. The card shows each route's fees and who covers
+them, plus Jupiter's price impact. The Solana side keeps a reserve
+(`SOL_RESERVE` 0.01) for fees and account rent and refuses trades under
+`FUND_MIN_SOL` (0.05, because Ethereum gas sets the real floor); a quote that
+cannot cover its own fees is refused with the numbers in the message. Each
+Solana leg is one transaction tracked by its signature across restarts, and a
+job that lost a reply is put back where the chains say it is
+(`node tests/sol-rail.test.js`). The Solana packages (`@solana/web3.js` and
+four `@wormhole-foundation/*` modules) are optional at boot: without them the
+rail reports itself off and everything else runs as before.
 
 **How custody works here — stated plainly:** the deposit address is a
 *transit* address whose key the server holds (like the bootstrap key). The
@@ -378,7 +395,7 @@ node server.js
 | `JUPITER_API` | *(lite, keyless)* | Jupiter swap API base; set with `JUPITER_API_KEY` for the keyed `api.jup.ag` tier |
 | `JUPITER_API_KEY` | — | Jupiter API key (optional) |
 | `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
-| `FUND_MIN_SOL` | `0.02` | smallest SOL swap the rail accepts |
+| `FUND_MIN_SOL` | `0.05` | smallest SOL swap the rail accepts (Ethereum gas sets the floor) |
 | `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | `ANDROID_SHA256_FINGERPRINTS` | — | SHA-256 fingerprint(s) of the Android app's signing certificate, comma-separated — serves `/.well-known/assetlinks.json` (see **Android app**) |
