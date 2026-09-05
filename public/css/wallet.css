@@ -64,12 +64,12 @@ body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 400 15px/22px var(--font);
   -webkit-font-smoothing: antialiased;
-  min-height: 100dvh; display: flex; flex-direction: column;
+  min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
   overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
   -webkit-user-select: none; user-select: none;
 }
 body.sheet-open { overflow: hidden; }
-.addr, #acct-addr, #kit-text, input, textarea, .sign-summary dd, #tok-contract { -webkit-user-select: text; user-select: text; }
+.addr, #acct-addr, #kit-text, input, textarea, .sign-summary dd, #tok-contract, .status, .hint, .fund-balances { -webkit-user-select: text; user-select: text; }
 a { color: var(--accent-soft); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { font: inherit; color: inherit; }
@@ -361,7 +361,7 @@ body.sheet-open #tabbar { transform: translate(-50%, 120%); }
 #scrim.in { opacity: 1; }
 .sheet {
   position: fixed; bottom: 0; left: 50%; transform: translate(-50%, 100%);
-  width: min(100%, 560px); max-height: 92dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  width: min(100%, 560px); max-height: 92vh; max-height: 92dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   background: var(--sheet); border-top: 1px solid var(--line-strong); border-radius: var(--r-xl) var(--r-xl) 0 0;
   box-shadow: var(--shadow-sheet); padding: 4px 20px calc(20px + env(safe-area-inset-bottom));
   z-index: var(--z-sheet); transition: transform var(--t-sheet) var(--ease); outline: none;
@@ -551,11 +551,11 @@ details.card[open] > summary { margin-bottom: 6px; }
 /* ───────────────────────── QR scanner (qr.js) ───────────────────────── */
 .qr-overlay { position: fixed; inset: 0; z-index: var(--z-qr); background: #000; display: grid; place-items: center; }
 .qr-sheet {
-  width: 100%; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto auto; gap: 12px; justify-items: center; align-items: center;
+  width: 100%; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto auto; gap: 12px; justify-items: center; align-items: center;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
 }
 .qr-head { font: 600 16px/22px var(--font); color: #fff; text-align: center; }
-.qr-stage { position: relative; width: min(100vw, 70dvh); aspect-ratio: 1; border-radius: var(--r-l); overflow: hidden; background: #000; }
+.qr-stage { position: relative; width: min(100vw, 70vh); width: min(100vw, 70dvh); aspect-ratio: 1; border-radius: var(--r-l); overflow: hidden; background: #000; }
 .qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .qr-frame {
   position: absolute; inset: 14%; border-radius: 12px; pointer-events: none;

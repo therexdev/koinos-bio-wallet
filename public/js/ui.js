@@ -189,15 +189,14 @@ const UI = (() => {
     const t = byId('toast');
     if (!t) return;
     clearTimeout(toastTimer);
-    t.textContent = text;
-    t.hidden = false;
+    /* The element is never hidden: a live region announces a text change,
+       not an un-hiding. Clear then set, so a repeated message is a change. */
+    t.textContent = '';
     t.classList.remove('in');
     void t.offsetWidth;                       // restart the slide
+    t.textContent = text;
     t.classList.add('in');
-    toastTimer = setTimeout(() => {
-      t.classList.remove('in');
-      setTimeout(() => { if (!t.classList.contains('in')) t.hidden = true; }, 220);
-    }, ms);
+    toastTimer = setTimeout(() => { t.classList.remove('in'); }, ms);
   }
 
   /* ---------------- context from app.js ---------------- */
@@ -264,7 +263,12 @@ const UI = (() => {
   function restoreLast(address) {
     try {
       const v = JSON.parse(localStorage.getItem(LS_LAST) || 'null');
-      return v && v.model && v.model.address === address ? v : null;
+      if (!v || !v.model || v.model.address !== address) return null;
+      /* Same address on another network (or a demo server) is another wallet. */
+      const net = CTX.cfg && CTX.cfg.network;
+      if (net && v.model.network && v.model.network !== net) return null;
+      if (CTX.cfg && !!v.model.demo !== !!CTX.cfg.demo) return null;
+      return v;
     } catch (_) { return null; }
   }
 
@@ -669,9 +673,32 @@ const UI = (() => {
       if (rk) { const b = byId('btn-rekey'); if (b) b.click(); }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      if (document.querySelector('.qr-overlay')) return;   // the scanner owns Escape while it is up
-      if (sheetEl) { e.preventDefault(); closeSheet(); }
+      if (e.defaultPrevented) return;
+      if (e.key === 'Escape') {
+        if (document.querySelector('.qr-overlay')) return;   // the scanner owns Escape while it is up
+        if (sheetEl) { e.preventDefault(); closeSheet(); }
+        return;
+      }
+      /* Tab stays inside an open sheet (it is a modal dialog). */
+      if (e.key === 'Tab' && sheetEl && !document.querySelector('.qr-overlay')) {
+        const items = [...sheetEl.querySelectorAll('button, [href], input, textarea, select, summary, [tabindex]:not([tabindex="-1"])')]
+          .filter((n) => !n.disabled && !n.hidden && n.offsetParent !== null && !n.closest('[hidden]'));
+        if (!items.length) { e.preventDefault(); sheetEl.focus(); return; }
+        const first = items[0], last = items[items.length - 1], cur = document.activeElement;
+        if (!sheetEl.contains(cur)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+        else if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+    /* Arrow keys move between tabs, as a tablist should. */
+    const bar = byId('tabbar');
+    if (bar) bar.addEventListener('keydown', (e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      const i = TABS.indexOf(currentTab);
+      const next = e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'Home' ? 0 : TABS.length - 1;
+      e.preventDefault();
+      showTab(TABS[next]);
+      const b = byId('tabbtn-' + TABS[next].slice(4)); if (b) b.focus();
     });
     /* checklist rows */
     on('chk-backup', () => { const b = byId('btn-add-passkey'); if (b && !b.hidden && !byId('chk-backup').classList.contains('on')) { b.scrollIntoView({ block: 'center' }); b.click(); } });

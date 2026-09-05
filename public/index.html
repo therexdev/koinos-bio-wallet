@@ -82,7 +82,7 @@
         (<code>koinos-recovery-kit-….txt</code>). Its key signs you in and can register a brand-new
         passkey — no old passkey needed.</p>
       <textarea id="kit-input" rows="7" spellcheck="false" placeholder="KOINOS BIO WALLET — RECOVERY KIT&#10;…"></textarea>
-      <div class="status" id="recover-status" hidden></div>
+      <div class="status" id="recover-status" role="status" aria-live="polite" hidden></div>
       <button class="cta small" id="btn-recover">Open my account</button>
       <p class="alt"><a href="#" id="btn-recover-back">← Back</a></p>
     </div>
@@ -92,7 +92,7 @@
        show() hides everything together ─── -->
   <section id="view-wallet" class="wallet" hidden>
     <div id="notices">
-      <div class="status" id="activation" hidden></div>
+      <div class="status" id="activation" role="status" aria-live="polite" hidden></div>
       <div class="status" id="recovery-banner" hidden>Recovery mode — signed in with your kit key.
         <button class="ghost small" id="btn-rekey" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> Add a passkey to this device</button></div>
     </div>
@@ -208,7 +208,7 @@
           </div>
         </div>
       </div>
-      <div class="status" id="fund-status" hidden></div>
+      <div class="status" id="fund-status" role="status" aria-live="polite" hidden></div>
       <p class="hint center">Quotes are live; the best route is marked.</p>
     </div>
 
@@ -248,7 +248,7 @@
         <ul class="cred-list" id="cred-list"></ul>
         <p class="hint callout good" id="kit-armed" hidden>✓ A recovery kit is active for this
           account — the file you saved opens it all by itself.</p>
-        <div class="status" id="backup-status" hidden></div>
+        <div class="status" id="backup-status" role="status" aria-live="polite" hidden></div>
         <div class="btn-row">
           <button class="ghost wide" id="btn-add-passkey" type="button"><svg class="ic ic-18"><use href="#i-key"/></svg> Add backup passkey</button>
           <button class="ghost wide" id="btn-make-kit" type="button"><svg class="ic ic-18"><use href="#i-ring"/></svg> Create recovery kit</button>
@@ -366,7 +366,7 @@
         <p class="foot">Your passkey signs exactly this and nothing else.</p>
       </div>
       <p class="warn-line" id="send-offline" hidden>You are offline — the send will fail until you reconnect.</p>
-      <div class="status" id="send-status" hidden></div>
+      <div class="status" id="send-status" role="status" aria-live="polite" hidden></div>
       <p class="hint center" id="send-gate" hidden>Sends unlock once your account is live on-chain — usually under a minute.</p>
       <button class="cta lock" id="btn-send" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> Send · confirm with passkey</button>
       <button class="ghost wide" id="btn-send-done" type="button" hidden>Done</button>
@@ -416,7 +416,7 @@
   <button class="tabbtn" id="tabbtn-security" role="tab" aria-selected="false" aria-controls="tab-security" type="button" tabindex="-1"><span class="ico"><svg class="ic"><use href="#i-shield"/></svg><span class="tabdot" id="tabdot-security" hidden></span></span><span>Security</span></button>
 </nav>
 <div id="scrim" hidden></div>
-<div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
