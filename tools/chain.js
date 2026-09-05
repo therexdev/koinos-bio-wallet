@@ -123,6 +123,37 @@ async function mana(addr) {
   const rc = await provider().getAccountRc(addr);
   return Number(rc) / 1e8;
 }
+
+/* ---- any token, by contract address ----
+   KOIN, VHP and every KoinDX-style token share the same interface, so one
+   reader covers the lot. Balances come back as the chain's integer string;
+   the caller scales by `decimals`. */
+const tokenContractAt = (id) => new Contract({ id, abi: TOKEN_ABI, provider: provider() });
+const vhpContract = () => tokenContractAt(net().vhpContract);
+
+async function tokenBalanceSats(contractId, owner) {
+  const { result } = await tokenContractAt(contractId).functions.balance_of({ owner });
+  return String(result?.value || '0');
+}
+async function vhpBalanceSats(addr) {
+  return net().vhpContract ? tokenBalanceSats(net().vhpContract, addr) : '0';
+}
+/** name / symbol / decimals — cached forever per address: they are fixed
+    at deploy and re-asking costs three RPC calls a token per page view. */
+const _meta = new Map();
+async function tokenMeta(contractId) {
+  if (_meta.has(contractId)) return _meta.get(contractId);
+  const f = tokenContractAt(contractId).functions;
+  const [n, s, d] = await Promise.all([f.name({}), f.symbol({}), f.decimals({})]);
+  const meta = {
+    address: contractId,
+    name: String(n.result?.value || ''),
+    symbol: String(s.result?.value || ''),
+    decimals: Number(d.result?.value ?? 8),
+  };
+  if (meta.symbol) _meta.set(contractId, meta);
+  return meta;
+}
 async function headInfo() {
   return provider().call('chain.get_head_info', {});
 }
@@ -814,6 +845,8 @@ module.exports = {
   provider, sponsor, sponsorAddress, isAddr, chainId,
   koinBalance, koinBalanceSats, mana, headInfo,
   humanChainError, waitMined, withRpcRetry,
+  tokenContractAt, tokenBalanceSats, vhpContract, vhpBalanceSats, tokenMeta,
+  net: () => net(),
   opKoinTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,

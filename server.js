@@ -28,6 +28,17 @@ const crypto = require('node:crypto');
 const chain = require('./tools/chain');
 const veive = require('./tools/veive');
 const funding = require('./tools/funding');
+const { createPrices } = require('./tools/prices');
+const ethSwap = require('./tools/eth/eth-swap');
+const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
+
+/* One Ethereum provider for price reads, dropped on failure so a dead RPC
+   does not get reused forever. */
+let _priceEthProvider = null;
+async function priceEthProvider() {
+  if (!_priceEthProvider) _priceEthProvider = await makeEthProvider().catch((e) => { _priceEthProvider = null; throw e; });
+  return _priceEthProvider;
+}
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
 const CFG = {
@@ -67,6 +78,15 @@ const CFG = {
 };
 
 let DEMO = CFG.demo;
+const prices = createPrices({
+  chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
+  coingecko: process.env.PRICES_COINGECKO !== '0',
+  log: (m) => console.log(m),
+});
+/* Other tokens the wallet lists for everyone, by contract address — the
+   chain supplies name/symbol/decimals. The client may add its own on top. */
+const WALLET_TOKENS = String(process.env.WALLET_TOKENS || '').split(',').map(t => t.trim()).filter(Boolean);
+const MAX_CLIENT_TOKENS = 12;
 let BOOT_NOTE = '';
 const WARNINGS = [];
 
@@ -267,6 +287,83 @@ api.account = async (params) => {
     chain.mana(address).catch(() => 0),
   ]);
   return { ok: true, koin, koinSats: String(koinSats), mana, smart };
+};
+
+/* ---------------- portfolio ----------------
+   Everything the wallet's home screen shows in one read: KOIN, VHP and any
+   other tokens with their balances and dollar values, mana, and the prices
+   those dollars came from. A price that is not known is null — the screen
+   shows "—" for it, never $0. */
+
+const fromSats = (sats, decimals) => {
+  const s = BigInt(sats || 0), d = BigInt(decimals);
+  const base = 10n ** d;
+  const whole = s / base, frac = String(s % base).padStart(Number(d), '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : String(whole);
+};
+
+api.portfolio = async (params) => {
+  const address = params.get('address');
+  if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
+  const net = NETWORKS[CFG.network];
+  /* Tokens the client asked about, on top of the server's list. Validated
+     and capped: this is a fan-out of RPC reads per request. */
+  const extra = String(params.get('tokens') || '').split(',').map(t => t.trim()).filter(Boolean)
+    .filter(t => chain.isAddr(t)).slice(0, MAX_CLIENT_TOKENS);
+  const tokenAddrs = [...new Set([...WALLET_TOKENS, ...extra])]
+    .filter(t => t !== net.koinContract && t !== net.vhpContract);
+
+  if (DEMO) {
+    const p = { value: 0.0102, source: 'sample', at: Date.now(), stale: false };
+    const v = { value: 0.0098, source: 'sample', at: Date.now(), stale: false };
+    const assets = [
+      { id: 'koin', symbol: net.nativeSymbol, name: 'Koin', address: net.koinContract, decimals: 8, native: true, sats: '12419000000', amount: '124.19', usd: 124.19 * p.value },
+      { id: 'vhp', symbol: 'VHP', name: 'Virtual Hash Power', address: net.vhpContract, decimals: 8, native: true, sats: '4000000000', amount: '40', usd: 40 * v.value },
+    ];
+    return {
+      ok: true, demo: true, network: CFG.network, address, mana: 5,
+      prices: { koinUsd: p, vhpUsd: v, vhpKoin: { value: 0.96, source: 'sample', at: Date.now(), stale: false }, ethUsd: { value: 2500, source: 'sample', at: Date.now(), stale: false } },
+      assets, totalUsd: assets.reduce((a, x) => a + x.usd, 0), allPriced: true,
+    };
+  }
+
+  const [koinSats, vhpSats, mana, px] = await Promise.all([
+    chain.koinBalanceSats(address).catch(() => null),
+    chain.vhpBalanceSats(address).catch(() => null),
+    chain.mana(address).catch(() => 0),
+    prices.snapshot(),
+  ]);
+  const usdOf = (amount, price) => (price && price.value != null && amount != null ? Number(amount) * price.value : null);
+  const assets = [
+    { id: 'koin', symbol: net.nativeSymbol, name: 'Koin', address: net.koinContract, decimals: 8, native: true,
+      sats: koinSats, amount: koinSats == null ? null : fromSats(koinSats, 8), unavailable: koinSats == null || undefined },
+    { id: 'vhp', symbol: 'VHP', name: 'Virtual Hash Power', address: net.vhpContract, decimals: 8, native: true,
+      sats: vhpSats, amount: vhpSats == null ? null : fromSats(vhpSats, 8), unavailable: vhpSats == null || undefined },
+  ];
+  assets[0].usd = usdOf(assets[0].amount, px.koinUsd);
+  assets[1].usd = usdOf(assets[1].amount, px.vhpUsd);
+
+  /* Other tokens: meta + balance each, one failure never empties the list. */
+  const others = await Promise.all(tokenAddrs.map(async (addr) => {
+    try {
+      const [meta, sats] = await Promise.all([chain.tokenMeta(addr), chain.tokenBalanceSats(addr, address)]);
+      return { id: addr, symbol: meta.symbol || '?', name: meta.name || addr, address: addr, decimals: meta.decimals,
+               native: false, sats, amount: fromSats(sats, meta.decimals), usd: null };
+    } catch (e) {
+      return { id: addr, symbol: '?', name: addr, address: addr, decimals: 8, native: false, sats: null, amount: null, usd: null,
+               unavailable: true, error: chain.humanChainError(e).slice(0, 80) };
+    }
+  }));
+  const all = assets.concat(others);
+  const priced = all.filter(a => a.usd != null);
+  return {
+    ok: true, network: CFG.network, address, mana,
+    prices: { koinUsd: px.koinUsd, vhpUsd: px.vhpUsd, vhpKoin: px.vhpKoin, ethUsd: px.ethUsd },
+    assets: all,
+    /* The sum of what CAN be priced; allPriced says whether that is all of it. */
+    totalUsd: priced.length ? priced.reduce((s, a) => s + a.usd, 0) : null,
+    allPriced: priced.length === all.filter(a => !a.unavailable).length && priced.length > 0,
+  };
 };
 
 /** Prepare the transaction that registers ONE more credential on the
@@ -609,7 +706,7 @@ function readBody(req, maxBytes = 64 * 1024) {
 }
 
 const GET_ROUTES = {
-  '/api/config': api.config, '/api/account': api.account,
+  '/api/config': api.config, '/api/account': api.account, '/api/portfolio': api.portfolio,
   '/api/account-status': api.accountStatus, '/api/health': api.health,
   '/api/fund/status': api.fundStatus, '/api/diagnose': api.diagnose,
 };

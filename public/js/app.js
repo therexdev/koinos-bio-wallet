@@ -16,6 +16,15 @@
   let RECOVERY = null;     // {credentialId, privateKey} while in recovery mode
   let PENDING_BACKUP = null; // a captured-but-unregistered backup passkey
   let BALANCE_SATS = '';   // the chain's own integer balance, for "Send all"
+
+  /* ---------------- installable ----------------
+     The service worker makes the wallet open offline and installable. It
+     never touches /api, so nothing about balances or signing changes. */
+  if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname === 'localhost')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+    });
+  }
   let PENDING_KIT = null;    // a generated-but-unregistered recovery kit
   let POLL = null;
 
