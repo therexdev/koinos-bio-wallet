@@ -1,0 +1,107 @@
+# Builds the Android app (a Trusted Web Activity around wallet.usekoinos.com)
+# and publishes the APK/AAB as workflow artifacts. Runs on pushes that touch
+# the Android project and on demand.
+#
+# Signing: add these repository secrets to get a release-signed build —
+#   ANDROID_KEYSTORE_BASE64   base64 of your .jks   (base64 -w0 release.jks)
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+# Without them the build is signed with a throwaway debug key: fine for
+# sideloading and testing, not for Play, and the site's assetlinks.json
+# will not match it (so the URL bar shows). The job summary prints the
+# SHA-256 fingerprint of whichever certificate signed the build — that is
+# the value for ANDROID_SHA256_FINGERPRINTS on the server.
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: 'Version name (e.g. 1.2.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_RELEASE_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
+      ANDROID_VERSION_NAME: ${{ github.event.inputs.versionName != '' && github.event.inputs.versionName || format('1.0.{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Release keystore from secrets
+        if: env.HAS_RELEASE_KEY == 'true'
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Build APK and App Bundle
+        working-directory: android
+        run: gradle --no-daemon assembleRelease bundleRelease
+
+      - name: Rename outputs
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/bio-wallet-${ANDROID_VERSION_NAME}.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "out/bio-wallet-${ANDROID_VERSION_NAME}.aab"
+
+      - name: Signing certificate fingerprint (for assetlinks.json)
+        run: |
+          FP=$(keytool -printcert -jarfile out/bio-wallet-${ANDROID_VERSION_NAME}.apk | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
+          KIND=$([ "$HAS_RELEASE_KEY" = "true" ] && echo "release key" || echo "DEBUG key — add the signing secrets for a real build")
+          {
+            echo "## Bio Wallet Android build ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE})"
+            echo
+            echo "Signed with the **${KIND}**."
+            echo
+            echo "SHA-256 fingerprint of the signing certificate:"
+            echo
+            echo '```'
+            echo "$FP"
+            echo '```'
+            echo
+            echo "Set this on the wallet server so Chrome verifies the app and hides the URL bar:"
+            echo
+            echo '```'
+            echo "ANDROID_SHA256_FINGERPRINTS=$FP"
+            echo '```'
+            echo
+            echo "Then check https://wallet.usekoinos.com/.well-known/assetlinks.json contains it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bio-wallet-android-${{ env.ANDROID_VERSION_NAME }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Attach to the release (tags only)
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

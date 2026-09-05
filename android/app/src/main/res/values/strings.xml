@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Bio Wallet</string>
+  <string name="host_name">wallet.usekoinos.com</string>
+  <string name="launch_url">https://wallet.usekoinos.com/?source=twa</string>
+  <string name="web_manifest_url">https://wallet.usekoinos.com/manifest.webmanifest</string>
+  <string name="provider_authority">com.usekoinos.biowallet.fileprovider</string>
+  <!-- The app's half of Digital Asset Links. The site's half is served at
+       https://wallet.usekoinos.com/.well-known/assetlinks.json -->
+  <string name="asset_statements">[{ \"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": { \"namespace\": \"web\", \"site\": \"https://wallet.usekoinos.com\" } }]</string>
+  <string name="shortcut_receive_short">Receive</string>
+  <string name="shortcut_receive_long">Show my address and QR code</string>
+  <string name="shortcut_send_short">Send</string>
+  <string name="shortcut_send_long">Send KOIN</string>
+  <string name="shortcut_buy_short">Buy KOIN</string>
+  <string name="shortcut_buy_long">Convert ETH, USDC or USDT to KOIN</string>
+</resources>

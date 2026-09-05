@@ -203,6 +203,49 @@ days (`bw_install_snooze`); an installed app never asks again
 Security → App. It pops up on the landing page on purpose: an account created
 inside the installed app has its passkey there from day one.
 
+## Android app
+
+The wallet ships as an Android app without a second codebase: `android/` is a
+**Trusted Web Activity** — Google's own route for putting a PWA on Android,
+the same thing Bubblewrap and PWABuilder generate. The app opens
+https://wallet.usekoinos.com in Chrome, full screen, no URL bar. Because it is
+still Chrome, everything that matters keeps working unchanged: passkeys (a
+WebView cannot do WebAuthn), the camera scanner, the service worker, the
+`?open=` shortcuts. An account made on the website opens in the app and vice
+versa — same origin, same passkey.
+
+**Getting an APK.** The `Android app` GitHub Actions workflow builds it: every
+push to `main` that touches `android/` (or a manual run from the Actions tab)
+produces `bio-wallet-<version>.apk` and `.aab` as workflow artifacts. The APK
+sideloads onto any phone; the AAB is what Play Console wants. Locally, with an
+Android SDK: `cd android && gradle assembleRelease`.
+
+**Signing.** With no secrets the build is signed by a throwaway debug key —
+installable, but not for Play and not matching the site's asset links. For a
+real key, make one once and keep it forever (losing it means a new app on
+Play):
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias biowallet -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.jks     # → repository secret ANDROID_KEYSTORE_BASE64
+# plus secrets ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS (biowallet), ANDROID_KEY_PASSWORD
+```
+
+**Losing the URL bar (Digital Asset Links).** Chrome hides the browser UI only
+when the site vouches for the app: `/.well-known/assetlinks.json` must name
+the package and the SHA-256 of the certificate that signed the installed
+build. The workflow prints that fingerprint in its job summary; put it in
+`ANDROID_SHA256_FINGERPRINTS` on the server (comma-separate several — the
+upload key *and*, once published, the Play app-signing key from Play Console →
+App integrity) and restart. Until then the app still works, just with the
+URL bar. Check with `curl https://wallet.usekoinos.com/.well-known/assetlinks.json`.
+
+**Play Store.** Upload the AAB, fill in the listing (the app is a wallet, so
+expect the finance/crypto questionnaire and a privacy policy URL), and add the
+Play app-signing fingerprint to the variable above. `related_applications` in
+the web manifest already points at the package, so Chrome can offer the Play
+listing once it exists.
+
 ## Honest mana economics
 
 | action | burns (≈) |
@@ -287,6 +330,8 @@ node server.js
 | `FUND_MAX_STABLE` | `150` | per-swap USDC/USDT cap (USD) |
 | `FUND_SLIPPAGE_BPS` | `150` | slippage floor for every funding swap (1.5%) |
 | `DEMO_MODE` | — | `1` forces demo mode |
+| `ANDROID_SHA256_FINGERPRINTS` | — | SHA-256 fingerprint(s) of the Android app's signing certificate, comma-separated — serves `/.well-known/assetlinks.json` (see **Android app**) |
+| `ANDROID_PACKAGE` | `com.usekoinos.biowallet` | the Android app's package name |
 
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
 why on `/api/config`.

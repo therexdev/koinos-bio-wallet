@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- The site's theme-color, so the system bars match the page. -->
+  <color name="statusBar">#121212</color>
+  <color name="navigationBar">#121212</color>
+  <color name="navigationDivider">#322A45</color>
+  <color name="splashBackground">#121212</color>
+  <color name="iconBackground">#7827E6</color>
+</resources>

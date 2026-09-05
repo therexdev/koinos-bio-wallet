@@ -6,21 +6,62 @@
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait",
   "background_color": "#121212",
   "theme_color": "#121212",
   "lang": "en",
-  "categories": ["finance"],
+  "categories": [
+    "finance"
+  ],
   "icons": [
-    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "/assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
   ],
   "shortcuts": [
-    { "name": "Receive", "url": "/?open=receive", "description": "Show your address and QR code" },
-    { "name": "Send", "url": "/?open=send", "description": "Send KOIN" },
-    { "name": "Buy KOIN", "url": "/?tab=convert", "description": "Convert ETH, USDC or USDT to KOIN" }
-  ]
+    {
+      "name": "Receive",
+      "url": "/?open=receive",
+      "description": "Show your address and QR code"
+    },
+    {
+      "name": "Send",
+      "url": "/?open=send",
+      "description": "Send KOIN"
+    },
+    {
+      "name": "Buy KOIN",
+      "url": "/?tab=convert",
+      "description": "Convert ETH, USDC or USDT to KOIN"
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "play",
+      "id": "com.usekoinos.biowallet"
+    }
+  ],
+  "prefer_related_applications": false
 }

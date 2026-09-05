@@ -1,0 +1,49 @@
+plugins { id 'com.android.application' }
+
+/* Release signing comes from the environment (CI secrets or a local
+   export). Without it the release build is signed with the debug key —
+   installable for testing, but Digital Asset Links then verify against
+   the debug certificate, so the URL bar stays until the real key is used. */
+def keystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
+def hasReleaseKey = keystorePath != null && new File(keystorePath).exists()
+
+android {
+  namespace 'com.usekoinos.biowallet'
+  compileSdk 34
+
+  defaultConfig {
+    applicationId 'com.usekoinos.biowallet'
+    minSdk 23                 // Android 6+; the TWA itself needs Chrome 72+
+    targetSdk 34
+    versionCode (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
+    versionName (System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0')
+  }
+
+  signingConfigs {
+    if (hasReleaseKey) {
+      release {
+        storeFile file(keystorePath)
+        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        keyAlias System.getenv('ANDROID_KEY_ALIAS')
+        keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  // Google's TWA launcher: opens the site in Chrome, full screen, verified.
+  implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

@@ -41,8 +41,19 @@ async function priceEthProvider() {
 }
 const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
+/* Digital Asset Links for the Android app (android/): the site vouches for
+   the app's package + signing certificate, Chrome then opens the Trusted
+   Web Activity without a URL bar. Fingerprints differ per signing key
+   (upload key, Play app-signing key, a debug build) — list every one that
+   should be trusted, comma-separated, as keytool prints them. */
+const FINGERPRINT = /^[0-9A-F]{2}(?::[0-9A-F]{2}){31}$/;
+const androidFingerprints = (raw) => String(raw || '').split(/[\s,]+/).map((f) => f.trim().toUpperCase()).filter(Boolean)
+  .filter((f) => FINGERPRINT.test(f));
+
 const CFG = {
   port: parseInt(process.env.PORT || '3000', 10),
+  androidPackage: (process.env.ANDROID_PACKAGE || 'com.usekoinos.biowallet').trim(),
+  androidFingerprints: androidFingerprints(process.env.ANDROID_SHA256_FINGERPRINTS),
   network: (process.env.KOINOS_NETWORK || 'harbinger').trim(),
   /* trimmed — a stray space or newline pasted into a hosting panel's env
      field must not break the key parse */
@@ -161,6 +172,7 @@ api.config = async () => {
     testnet: !!net.testnet,
     nativeSymbol: net.nativeSymbol,
     explorer: net.explorer,
+    androidApp: CFG.androidFingerprints.length ? CFG.androidPackage : null,
     demo: DEMO,
     note: BOOT_NOTE || undefined,
     warnings: WARNINGS.length ? WARNINGS : undefined,
@@ -689,6 +701,23 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+/** /.well-known/assetlinks.json — see CFG.androidFingerprints. Unconfigured
+    answers 404 with the variable's name, never an empty statement that would
+    read as a silent verification failure. Chrome fetches it cross-origin. */
+function serveAssetLinks(res) {
+  const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' };
+  const fps = CFG.androidFingerprints;
+  if (!fps.length) {
+    res.writeHead(404, headers);
+    return res.end(JSON.stringify({ error: 'Android app not configured: set ANDROID_SHA256_FINGERPRINTS to the signing certificate SHA-256 fingerprint(s), comma-separated' }));
+  }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: CFG.androidPackage, sha256_cert_fingerprints: fps },
+  }]));
+}
+
 function readBody(req, maxBytes = 64 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
@@ -740,6 +769,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(out));
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if (pathname === '/.well-known/assetlinks.json') return serveAssetLinks(res);
     return serveStatic(req, res, pathname);
   } catch (e) {
     const status = e.status || 500;

@@ -1,0 +1,5 @@
+// Koinos Bio Wallet for Android — a Trusted Web Activity around
+// https://wallet.usekoinos.com. See android/README.md.
+plugins {
+  id 'com.android.application' version '8.5.2' apply false
+}
