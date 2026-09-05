@@ -21,7 +21,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
    trace back to the code that would break. */
 const IDS = {
   'app.js (existing)': [
-    'net-badge', 'demo-note', 'sym', 'sym2', 'btn-signout', 'btn-go', 'no-passkey', 'alt-unlock',
+    'demo-note', 'sym', 'sym2', 'btn-signout', 'btn-go', 'no-passkey', 'alt-unlock',
     'btn-unlock-existing', 'btn-open-recover', 'btn-recover-back', 'btn-recover', 'addr',
     'btn-add-passkey', 'btn-backup-activate', 'btn-backup-cancel', 'btn-make-kit', 'btn-kit-activate',
     'btn-kit-cancel', 'btn-rekey', 'btn-send', 'btn-scan', 'btn-send-all', 'view-landing', 'view-wallet',

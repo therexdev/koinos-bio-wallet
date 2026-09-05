@@ -45,10 +45,16 @@
   let cfg = null;
   try { cfg = await api('/api/config'); } catch (_) { cfg = { demo: true, nativeSymbol: 'KOIN' }; }
   if (cfg.rpId) Passkey.setRpId(cfg.rpId);
+  /* The network is stamped on <body> for CSS and for anything that wants
+     it; there is no app bar, so the badge itself is optional. */
+  const NET = cfg.demo ? 'demo' : cfg.testnet ? 'testnet' : 'mainnet';
+  document.body.dataset.net = NET;
   const badge = $('#net-badge');
-  if (cfg.demo) { badge.textContent = 'demo'; badge.classList.add('demo'); $('#demo-note').hidden = false; }
-  else badge.textContent = cfg.testnet ? (cfg.networkLabel || '').replace('Koinos ', '') : 'mainnet';
-  badge.classList.add(cfg.demo ? 'demo' : cfg.testnet ? 'testnet' : 'mainnet'); // CSS cannot match text
+  if (badge) {
+    badge.textContent = cfg.demo ? 'demo' : cfg.testnet ? (cfg.networkLabel || '').replace('Koinos ', '') : 'mainnet';
+    badge.classList.add(NET);
+  }
+  if (cfg.demo) $('#demo-note').hidden = false;
   $('#sym').textContent = cfg.nativeSymbol || 'KOIN';
   $('#sym2').textContent = cfg.nativeSymbol || 'KOIN';
   UI.setContext({ cfg });
