@@ -10,6 +10,10 @@ def hasReleaseKey = keystorePath != null && new File(keystorePath).exists()
    parses as `(versionCode(expr)).toInteger()`, which is null. */
 def envVersionCode = (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
 def envVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0'
+/* The debug key at a known path (CI caches it so builds keep one identity;
+   the plugin's default location varies between machines). Standard debug
+   credentials, as Android Studio uses. */
+def debugKeystore = System.getenv('ANDROID_DEBUG_KEYSTORE') ?: "${System.getProperty('user.home')}/.android/debug.keystore"
 
 android {
   namespace = 'com.usekoinos.biowallet'
@@ -24,6 +28,12 @@ android {
   }
 
   signingConfigs {
+    debug {
+      storeFile = file(debugKeystore)
+      storePassword = 'android'
+      keyAlias = 'androiddebugkey'
+      keyPassword = 'android'
+    }
     if (hasReleaseKey) {
       release {
         storeFile = file(keystorePath)
