@@ -284,7 +284,6 @@ textarea { font-size: 16px; line-height: 1.5; resize: vertical; margin: 4px 0 10
 }
 .row + .row::before { content: ""; position: absolute; left: 68px; right: 0; top: 0; border-top: 1px solid var(--line); }
 .row:active { background: var(--inset); }
-.row[data-zero="1"] { opacity: .55; }
 .row .icon, .tok-head .icon {
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; position: relative;
   font: 800 18px/1 var(--font); color: #fff; flex: none;

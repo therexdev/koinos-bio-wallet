@@ -233,14 +233,24 @@ const Fund = (() => {
     }
     const b = st.balances;
 
-    /* Deposit balances as first-class wallet stats, next to KOIN and mana. */
+    /* Deposit balances as wallet stats on the home screen — but only what
+       can actually be converted. A row is shown when the server's SPENDABLE
+       amount (balance minus the gas reserve, within the cap) is above zero;
+       dust below the reserve, or nothing at all, shows no row, and with no
+       row and nothing mid-bridge the whole group goes. A row that leads to
+       a Buy tab with nothing to convert is worse than no row. */
     const tiles = $('#deposit-stats');
     if (tiles) {
-      tiles.hidden = false;
       const f = (v, dp) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: dp });
       const tag = st.demo ? ' <span class="stat-sample">sample</span>' : '';
+      const sp = st.spendable || {};
+      const can = (a) => Number(sp[a]) > 0;
+      const showEth = !!b && can('eth');
+      const showStable = !!b && (can('usdc') || can('usdt'));
       $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
       $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
+      opt('#stat-eth-row', (n) => { n.hidden = !showEth; });
+      opt('#stat-stable-row', (n) => { n.hidden = !showStable; });
       /* Funds mid-bridge belong on the wallet screen too — they are the
          user's, they are just not at the deposit address any more. */
       const j0 = st.job;
@@ -250,8 +260,7 @@ const Fund = (() => {
         card.hidden = !held;
         if (held) $('#stat-bridge').innerHTML = `${koin(held)} KOIN` + tag;
       }
-      opt('#stat-eth-row', (n) => { n.dataset.zero = b && Number(b.eth) > 0 ? '0' : '1'; });
-      opt('#stat-stable-row', (n) => { n.dataset.zero = b && (Number(b.usdc) > 0 || Number(b.usdt) > 0) ? '0' : '1'; });
+      tiles.hidden = !(showEth || showStable || !!held);
     }
 
     /* the in-card strip mirrors the same numbers */
