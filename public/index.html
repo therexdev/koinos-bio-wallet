@@ -35,6 +35,7 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
   <symbol id="i-eth" viewBox="0 0 24 24"><path d="M12 3l6 9.3-6 3.5-6-3.5z"/><path d="M6 13.8l6 8.2 6-8.2-6 3.5z"/></symbol>
+  <symbol id="i-sol" viewBox="0 0 24 24"><path d="M7.5 5.5H20l-3.5 3.5H4z"/><path d="M4 10.25h12.5L20 13.75H7.5z"/><path d="M7.5 15H20l-3.5 3.5H4z"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h3v3M20 14v2M17 20h3M14 19v1"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
   <symbol id="i-door" viewBox="0 0 24 24"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="M14 8l4 4-4 4M18 12H9"/></symbol>
@@ -134,22 +135,27 @@
       <p class="hint refresh-note" id="refresh-note" hidden></p>
 
       <div class="deposit-group" id="deposit-stats" hidden>
-        <div class="section-head"><span class="eyebrow">Waiting to convert · Ethereum</span></div>
+        <div class="section-head"><span class="eyebrow">Waiting to convert</span></div>
         <p class="hint sub">Held by the app's funding key until it lands as KOIN. Tap a row to convert.</p>
         <div class="list">
           <button class="row" id="stat-eth-row" type="button" data-goto="tab-convert">
             <span class="icon eth"><svg class="ic"><use href="#i-eth"/></svg><span class="net-badge">E</span></span>
-            <span class="mid"><span class="t">ETH</span><span class="s">At your deposit address</span></span>
+            <span class="mid"><span class="t">ETH</span><span class="s">At your Ethereum deposit address</span></span>
             <span class="right"><span class="v num" id="stat-eth">…</span></span>
           </button>
           <button class="row" id="stat-stable-row" type="button" data-goto="tab-convert">
             <span class="icon eth"><span class="sym-text">$</span><span class="net-badge">E</span></span>
-            <span class="mid"><span class="t">USDC / USDT</span><span class="s">At your deposit address</span></span>
+            <span class="mid"><span class="t">USDC / USDT</span><span class="s">At your Ethereum deposit address</span></span>
             <span class="right"><span class="v num" id="stat-stable">…</span></span>
+          </button>
+          <button class="row" id="stat-sol-row" type="button" data-goto="tab-convert" hidden>
+            <span class="icon sol"><svg class="ic"><use href="#i-sol"/></svg><span class="net-badge sol">S</span></span>
+            <span class="mid"><span class="t">SOL</span><span class="s">At your Solana deposit address</span></span>
+            <span class="right"><span class="v num" id="stat-sol">…</span></span>
           </button>
           <button class="row" id="stat-bridge-card" type="button" data-goto="tab-convert" hidden>
             <span class="icon eth"><span class="fund-spin" aria-hidden="true"></span></span>
-            <span class="mid"><span class="t">Landing as KOIN</span><span class="s">In the Vortex bridge</span></span>
+            <span class="mid"><span class="t">Landing as KOIN</span><span class="s" id="stat-bridge-sub">In the Vortex bridge</span></span>
             <span class="right"><span class="v num" id="stat-bridge">…</span></span>
           </button>
         </div>
@@ -160,24 +166,31 @@
     <div id="tab-convert" class="tab" role="tabpanel" aria-labelledby="tabbtn-convert" hidden>
       <div class="page-head">
         <h2>Buy KOIN <span class="tag warn" id="buy-sim-chip" hidden>Simulated</span></h2>
-        <p class="sub">Convert ETH, USDC or USDT you already hold — from any wallet or exchange — into KOIN. One passkey tap lands it.</p>
+        <p class="sub">Convert ETH, USDC, USDT or SOL you already hold — from any wallet or exchange — into KOIN. One passkey tap lands it.</p>
       </div>
 
       <div class="card" id="fund-setup">
         <div class="step-head"><span class="step-n">1</span><span class="k">Deposit</span></div>
-        <p class="hint">You need ETH, USDC or USDT in another wallet or exchange first. This account gets a
-          personal Ethereum deposit address; whatever you send there is converted to KOIN here.</p>
-        <button class="ghost wide" id="btn-fund-enable" type="button">Show my deposit address</button>
+        <p class="hint">You need ETH, USDC, USDT or SOL in another wallet or exchange first. This account gets its
+          own Ethereum and Solana deposit addresses; whatever you send there is converted to KOIN here.</p>
+        <button class="ghost wide" id="btn-fund-enable" type="button">Show my deposit addresses</button>
       </div>
 
       <div id="fund-body" hidden>
         <div class="card">
-          <div class="step-head"><span class="step-n">1</span><span class="k">Deposit</span><span class="fund-net">Ethereum mainnet only</span></div>
+          <div class="step-head"><span class="step-n">1</span><span class="k">Deposit</span><span class="fund-net">Ethereum mainnet</span></div>
           <div class="qr-tile small" id="fund-eth-qr"><span class="skel" aria-hidden="true"></span></div>
           <button class="addr fund-addr" id="fund-eth-addr" type="button" title="Copy Ethereum address"></button>
-          <p class="hint center">Tap the address to copy.</p>
-          <div class="custody-note">Send ETH, USDC or USDT here only. In-transit funds are held by the app's funding
-            key until they land as KOIN on your smart account, so keep amounts modest. Other tokens sent here are lost.</div>
+          <p class="hint center">Tap the address to copy. ETH, USDC or USDT.</p>
+          <div class="fund-chain" id="fund-sol-block" hidden>
+            <div class="step-head"><span class="k">Or with SOL</span><span class="fund-net sol">Solana mainnet</span></div>
+            <div class="qr-tile small" id="fund-sol-qr"><span class="skel" aria-hidden="true"></span></div>
+            <button class="addr fund-addr" id="fund-sol-addr" type="button" title="Copy Solana address"></button>
+            <p class="hint center">Tap the address to copy. SOL only.</p>
+          </div>
+          <div class="custody-note">Send ETH, USDC or USDT to the Ethereum address and SOL to the Solana address — nothing else.
+            In-transit funds are held by the app's funding key until they land as KOIN on your smart account, so keep
+            amounts modest. Other tokens sent to either address are lost.</div>
           <div class="fund-balances" id="fund-balances"></div>
         </div>
 

@@ -37,6 +37,8 @@
   --bad-tint: rgba(248, 113, 113, .12);
   --icon-vhp: #2b2340;
   --icon-eth: #1f2a44;
+  --icon-sol: #12292a;
+  --sol: #14f195;
   --qr-bg: #ffffff;
   --qr-fg: #000000;
   /* type: `inherit` is not allowed inside the font shorthand, so the
@@ -293,6 +295,8 @@ textarea { font-size: 16px; line-height: 1.5; resize: vertical; margin: 4px 0 10
 .icon.custom { background: var(--inset); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text); }
 .icon.eth { background: var(--icon-eth); color: var(--info); }
 .icon.eth .sym-text { font-weight: 800; }
+.icon.sol { background: var(--icon-sol); color: var(--sol); }
+.icon .net-badge.sol { background: var(--sol); }
 .icon .net-badge {
   position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%;
   background: var(--info); color: #0b1220; font: 800 9px/14px var(--font); text-align: center; box-shadow: 0 0 0 2px var(--card);
@@ -455,6 +459,10 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .step-n { width: 24px; height: 24px; border-radius: 50%; background: var(--tint-accent); color: var(--accent-soft); font: 800 12px/24px var(--font); text-align: center; flex: none; }
 .step-head .k { margin: 0; }
 .fund-net { font: 700 10px/1 var(--font); text-transform: uppercase; letter-spacing: .04em; padding: 5px 8px; border-radius: var(--r-pill); border: 1px solid rgba(96, 165, 250, .5); color: var(--info); margin-left: auto; }
+.fund-net.sol { border-color: rgba(20, 241, 149, .5); color: var(--sol); }
+.fund-chain { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.fund-chain .step-head { margin-bottom: 4px; }
+.fund-chain .step-head .k { font-size: 14px; }
 .fund-addr { font-size: 13px; }
 .custody-note {
   border: 1px solid rgba(251, 191, 36, .5); background: var(--warn-tint); color: var(--warn);
@@ -496,6 +504,8 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .fund-best { color: var(--good); font: 800 10px/1 var(--font); text-transform: uppercase; letter-spacing: .06em; margin-left: 6px; vertical-align: middle; }
 .fund-worse { color: var(--dim); font: 500 12px/16px var(--font); margin-left: 6px; }
 .fund-min { display: block; color: var(--dim); font: 500 12px/16px var(--font); }
+.fund-impact { display: block; color: var(--dim); font: 500 12px/16px var(--font); }
+.fund-impact.warn { color: var(--warn); }
 .fund-unavail { color: var(--bad); font: 500 13px/18px var(--font); margin-top: 4px; }
 .fund-gaswarn { border: 1px solid rgba(251, 191, 36, .5); border-radius: var(--r-m); padding: 9px 12px; font: 500 13px/18px var(--font); color: var(--warn); margin: 2px 0 8px; }
 #fund-job .job-label { font: 600 16px/22px var(--font); color: var(--bright); }

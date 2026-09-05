@@ -37,6 +37,8 @@ const IDS = {
     /* null-guarded additions for the mobile shell */
     'fund-eth-qr', 'buy-sim-chip', 'tabdot-convert', 'stat-eth-row', 'stat-stable-row', 'fund-land-idle',
     'fund-convert-busy',
+    /* Route S (Solana), also null-guarded */
+    'fund-sol-block', 'fund-sol-qr', 'fund-sol-addr', 'stat-sol-row', 'stat-sol', 'stat-bridge-sub',
   ],
   'ui.js (shell)': [
     'tabbar', 'tabbtn-home', 'tabbtn-convert', 'tabbtn-security', 'tabdot-security', 'scrim', 'toast',

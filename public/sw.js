@@ -20,7 +20,7 @@
    ============================================================ */
 'use strict';
 
-const CACHE = 'bio-wallet-shell-v2';
+const CACHE = 'bio-wallet-shell-v3';
 const SHELL = [
   '/', '/index.html', '/css/wallet.css', '/manifest.webmanifest',
   '/js/app.js', '/js/fund.js', '/js/passkey.js', '/js/recovery.js',

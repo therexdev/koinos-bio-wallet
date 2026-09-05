@@ -1,9 +1,10 @@
-/* Fund with ETH / USDC / USDT — the wallet face of the two-route
-   ETH→KOIN pipeline, mirroring Koinos Node Desktop's Fund view: pick an
-   amount, see BOTH routes priced with the best on top, choose one, and
-   confirm the KOIN landing with your passkey (the chain verifies that
-   signature — the server can't land funds on its own). Every account has
-   its deposit address from birth. */
+/* Fund with ETH / USDC / USDT / SOL — the wallet face of the funding
+   pipeline, mirroring Koinos Node Desktop's Fund view: pick an amount, see
+   every route priced with the best on top, choose one, and confirm the KOIN
+   landing with your passkey (the chain verifies that signature — the server
+   can't land funds on its own). Every account has its deposit addresses
+   from birth: Ethereum for ETH and the stables, Solana for SOL (Route S,
+   which crosses Wormhole to Ethereum and then lands like the others). */
 'use strict';
 
 const Fund = (() => {
@@ -13,6 +14,7 @@ const Fund = (() => {
   let LAST = null;
   let BUSY = false;
   let QR_SHOWN = null;        // the deposit address the QR tile currently shows
+  let QR_SHOWN_SOL = null;    // same, for the Solana tile
   let LAST_JOB_STATUS = null; // to notice a job finishing while another tab is up
   const DEBOUNCE = {};
 
@@ -36,6 +38,11 @@ const Fund = (() => {
     approve_bridge: 'Approving the Vortex bridge…',
     bridge_token: 'Bridging vKOIN → Koinos (Vortex, 1:1)…',
     deposit_eth: 'Depositing ETH into the Vortex bridge…',
+    /* Route S */
+    sol_swap: 'Swapping SOL → vKOIN on Solana (Jupiter)…',
+    sol_bridge: 'Sending vKOIN across Wormhole to Ethereum…',
+    awaiting_vaa: 'Wormhole guardians are signing (usually 1–2 minutes)…',
+    wh_redeem: 'Receiving the vKOIN on Ethereum…',
     awaiting_signatures: 'Bridge guardians are signing (usually 2–3 minutes)…',
     awaiting_redeem: 'Landing your KOIN on your account…',
     /* awaiting_redeem normally completes on its own; it only asks for a tap
@@ -47,14 +54,21 @@ const Fund = (() => {
 
   /* Job states where the funds sit in the bridge rather than at the deposit
      address — nothing shows in the token balances, so say it explicitly. */
-  const IN_BRIDGE = new Set(['awaiting_signatures', 'awaiting_redeem', 'awaiting_swap']);
+  const IN_BRIDGE = new Set(['awaiting_signatures', 'awaiting_redeem', 'awaiting_swap', 'awaiting_vaa', 'wh_redeem']);
+  /* Gas being fronted right before the Wormhole redeem is the same state
+     for the money: it is in Wormhole, not at either address. */
+  const inBridgeState = (j) => !!j && (IN_BRIDGE.has(j.status) || (j.status === 'front_gas' && j.afterGas === 'wh_redeem'));
+  const bridgeName = (j) => (j && (j.status === 'awaiting_vaa' || j.status === 'wh_redeem' || j.afterGas === 'wh_redeem') ? 'Wormhole' : 'Vortex');
 
-  const SYM = { eth: 'ETH', usdc: 'USDC', usdt: 'USDT' };
+  const SYM = { eth: 'ETH', usdc: 'USDC', usdt: 'USDT', sol: 'SOL' };
+  const CHAIN = { eth: 'Ethereum', usdc: 'Ethereum', usdt: 'Ethereum', sol: 'Solana' };
+  const DP = { eth: 5, usdc: 2, usdt: 2, sol: 4 };
 
   function mount(ctx) {
     CTX = ctx;
     $('#btn-fund-enable').addEventListener('click', refresh);
-    $('#fund-eth-addr').addEventListener('click', copyAddr);
+    $('#fund-eth-addr').addEventListener('click', () => copyAddr('eth'));
+    opt('#fund-sol-addr', (n) => n.addEventListener('click', () => copyAddr('sol')));
     $('#btn-fund-land').addEventListener('click', land);
     $('#btn-fund-retry').addEventListener('click', () => act('/api/fund/resume'));
     $('#btn-fund-reset').addEventListener('click', () => act('/api/fund/reset'));
@@ -85,12 +99,16 @@ const Fund = (() => {
   /* Sign-out: nothing of the previous account survives into the next —
      neither the state nor what render() wrote on screen. */
   function forget() {
-    stop(); LAST = null; LAST_JOB_STATUS = null; QR_SHOWN = null;
+    stop(); LAST = null; LAST_JOB_STATUS = null; QR_SHOWN = null; QR_SHOWN_SOL = null;
     $('#fund-setup').hidden = false; $('#fund-body').hidden = true;
     $('#fund-eth-addr').textContent = ''; $('#fund-balances').innerHTML = ''; $('#fund-assets').innerHTML = '';
     $('#fund-job').hidden = true; $('#fund-job-label').textContent = ''; $('#fund-job-sub').textContent = '';
     say('');
     opt('#fund-eth-qr', (n) => { n.classList.remove('fail'); n.innerHTML = '<span class="skel" aria-hidden="true"></span>'; });
+    opt('#fund-sol-qr', (n) => { n.classList.remove('fail'); n.innerHTML = '<span class="skel" aria-hidden="true"></span>'; });
+    opt('#fund-sol-block', (n) => { n.hidden = true; });
+    opt('#fund-sol-addr', (n) => { n.textContent = ''; });
+    opt('#stat-sol-row', (n) => { n.hidden = true; });
     opt('#deposit-stats', (n) => { n.hidden = true; });
     opt('#stat-bridge-card', (n) => { n.hidden = true; });
     opt('#tabdot-convert', (n) => { n.hidden = true; n.classList.remove('pulse'); });
@@ -119,11 +137,13 @@ const Fund = (() => {
 
   const say = (m, cls) => { const st = $('#fund-status'); st.hidden = !m; st.className = 'status' + (cls ? ' ' + cls : ''); st.textContent = m || ''; };
 
-  async function copyAddr() {
-    const a = (LAST && LAST.ethAddress) || '';
-    try { await navigator.clipboard.writeText(a); $('#fund-eth-addr').style.borderColor = 'var(--good)'; }
-    catch (_) { window.prompt('Copy your Ethereum deposit address:', a); }
-    setTimeout(() => { $('#fund-eth-addr').style.borderColor = ''; }, 900);
+  async function copyAddr(which) {
+    const solana = which === 'sol';
+    const a = (LAST && (solana ? LAST.solAddress : LAST.ethAddress)) || '';
+    const el = $(solana ? '#fund-sol-addr' : '#fund-eth-addr');
+    try { await navigator.clipboard.writeText(a); el.style.borderColor = 'var(--good)'; }
+    catch (_) { window.prompt(`Copy your ${solana ? 'Solana' : 'Ethereum'} deposit address:`, a); }
+    setTimeout(() => { el.style.borderColor = ''; }, 900);
   }
 
   async function act(path) {
@@ -160,19 +180,27 @@ const Fund = (() => {
     const single = q.routes.length === 1;
     return q.routes.map((r) => {
       const head = `<strong>Route ${esc(r.id)}</strong> — ${esc(r.label)}`;
-      const steps = `<div class="fund-steps">${esc((r.steps || []).join('  →  '))}</div>`;
+      const via = r.via && r.via.length ? ` · via ${esc(r.via.join(', '))}` : '';
+      const steps = `<div class="fund-steps">${esc((r.steps || []).join('  →  '))}${via}</div>`;
       if (r.koinOut == null) {
         return `<div class="fund-route">${head}${steps}<div class="fund-unavail">unavailable: ${esc(r.error || 'no quote')}</div></div>`;
       }
       const best = r.isBest ? ' <span class="fund-best">★ best</span>'
         : (r.pctOfBest != null ? ` <span class="fund-worse">— ${r.pctOfBest}% of best</span>` : '');
       const min = r.koinOutMin ? ` <span class="fund-min">(min ${koin(r.koinOutMin)} after slippage)</span>` : '';
+      /* A shallow pool moves a lot for a little — say so before the tap,
+         not after: the trade is priced with the impact in, and a smaller
+         amount keeps more of it. */
+      const pi = Number(r.priceImpactPct);
+      const impact = r.priceImpactPct != null && isFinite(pi)
+        ? `<span class="fund-impact${pi >= 5 ? ' warn' : ''}">price impact ${pi < 0.01 ? '<0.01' : pi.toFixed(2)}%${pi >= 5 ? ' — the pool is shallow; a smaller amount loses less' : ''}</span>`
+        : '';
       const btnLabel = single ? 'Swap & bridge to KOIN' : `Use Route ${esc(r.id)}`;
       return `<div class="fund-route${r.isBest ? ' is-best' : ''}">` +
         `<div class="fund-route-head">${head}` +
         `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}">${btnLabel}</button></div>` +
         steps +
-        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}</div>` +
+        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}</div>` +
         `</div>`;
     }).join('');
   }
@@ -181,7 +209,8 @@ const Fund = (() => {
     if (BUSY) return;
     BUSY = true; if (btn) btn.disabled = true;
     try {
-      say('Starting the swap — the server drives the Ethereum side from here…');
+      say(asset === 'sol' ? 'Starting the swap — the server drives the Solana and Ethereum legs from here…'
+        : 'Starting the swap — the server drives the Ethereum side from here…');
       await CTX.api('/api/fund/start', { credentialId: CTX.credentialId(), asset, amount, route });
       say('');
       await refresh();
@@ -231,6 +260,20 @@ const Fund = (() => {
           .catch(() => { QR_SHOWN = null; n.classList.add('fail'); n.textContent = 'QR unavailable — copy the address instead'; });
       });
     }
+    /* The Solana deposit block, when this server runs Route S. */
+    const solOn = !!(st.solAddress && st.solRail && st.solRail.enabled);
+    opt('#fund-sol-block', (n) => { n.hidden = !solOn; });
+    if (solOn) {
+      opt('#fund-sol-addr', (n) => { n.textContent = st.solAddress; });
+      if (st.solAddress !== QR_SHOWN_SOL && typeof Receive !== 'undefined') {
+        opt('#fund-sol-qr', (n) => {
+          QR_SHOWN_SOL = st.solAddress;
+          n.classList.remove('fail');
+          Receive.render(n, st.solAddress, { raw: true, cell: 4 })
+            .catch(() => { QR_SHOWN_SOL = null; n.classList.add('fail'); n.textContent = 'QR unavailable — copy the address instead'; });
+        });
+      }
+    }
     const b = st.balances;
 
     /* Deposit balances as wallet stats on the home screen — but only what
@@ -247,20 +290,26 @@ const Fund = (() => {
       const can = (a) => Number(sp[a]) > 0;
       const showEth = !!b && can('eth');
       const showStable = !!b && (can('usdc') || can('usdt'));
+      const showSol = solOn && !!b && b.sol != null && can('sol');
       $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
       $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
+      opt('#stat-sol', (n) => { n.innerHTML = showSol ? f(b.sol, 4) + tag : '—'; });
       opt('#stat-eth-row', (n) => { n.hidden = !showEth; });
       opt('#stat-stable-row', (n) => { n.hidden = !showStable; });
+      opt('#stat-sol-row', (n) => { n.hidden = !showSol; });
       /* Funds mid-bridge belong on the wallet screen too — they are the
          user's, they are just not at the deposit address any more. */
       const j0 = st.job;
-      const held = j0 && IN_BRIDGE.has(j0.status) ? (j0.recordAmount || j0.estKoinOut) : null;
+      const held = inBridgeState(j0) ? (j0.recordAmount || j0.estKoinOut) : null;
       const card = $('#stat-bridge-card');
       if (card) {
         card.hidden = !held;
-        if (held) $('#stat-bridge').innerHTML = `${koin(held)} KOIN` + tag;
+        if (held) {
+          $('#stat-bridge').innerHTML = `${koin(held)} KOIN` + tag;
+          opt('#stat-bridge-sub', (n) => { n.textContent = `In the ${bridgeName(j0)} bridge`; });
+        }
       }
-      tiles.hidden = !(showEth || showStable || !!held);
+      tiles.hidden = !(showEth || showStable || showSol || !!held);
     }
 
     /* the in-card strip mirrors the same numbers */
@@ -274,6 +323,17 @@ const Fund = (() => {
       /* Always shown, zero included. Hiding it when it hits 0 is how a
          correct bridging step reads as "my money disappeared". */
       strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong></span>`);
+      if (solOn) {
+        if (b.sol != null) {
+          const sp = st.spendable || {};
+          const stuck = Number(b.sol) > 0 && !(Number(sp.sol) > 0) && st.solFloor;
+          strip.push(`<span>SOL <strong>${f(b.sol, 4)}</strong>${stuck ? ` · needs ${esc(st.solFloor)} to convert` : ''}</span>`);
+          /* vKOIN on Solana exists only mid-route; shown while it does. */
+          if (Number(b.solVkoin) > 0) strip.push(`<span>vKOIN·Solana <strong>${f(b.solVkoin, 2)}</strong></span>`);
+        } else if (b.solError) {
+          strip.push('<span>Solana balance unavailable right now</span>');
+        }
+      }
     } else if (st.balancesError) {
       strip.push('<span>balances unavailable right now</span>');
     }
@@ -282,10 +342,10 @@ const Fund = (() => {
        record. Showing nothing for it reads as "it vanished", which is the
        one thing it has not done. */
     const inFlight = st.job;
-    const inBridge = inFlight && IN_BRIDGE.has(inFlight.status)
+    const inBridge = inBridgeState(inFlight)
       ? (inFlight.recordAmount || inFlight.estKoinOut) : null;
     if (inBridge) {
-      strip.push(`<span class="fund-inflight">in the bridge <strong>${koin(inBridge)} KOIN</strong>`
+      strip.push(`<span class="fund-inflight">in the ${bridgeName(inFlight)} bridge <strong>${koin(inBridge)} KOIN</strong>`
         + ' — waiting to land on your account</span>');
     }
     $('#fund-balances').innerHTML = strip.join('<span class="fund-dot">·</span>');
@@ -320,21 +380,25 @@ const Fund = (() => {
     if (!jobActive && b && st.spendable && st.accountActive !== false) {
       const lowGas = !st.gasFronting && Number(b.eth) < Number(st.gasMinEth || 0.0012);
       const panels = [];
-      for (const asset of ['eth', 'usdc', 'usdt']) {
+      for (const asset of ['eth', 'usdc', 'usdt', 'sol']) {
         const spend = st.spendable[asset];
         if (!(Number(spend) > 0)) continue;
+        if (asset === 'sol' && (!solOn || b.sol == null)) continue;
         const open = document.querySelector(`.fund-asset[data-asset="${asset}"] input[data-amt]`);
         const value = open && document.activeElement === open ? open.value : spend;
-        const cap = asset === 'eth' ? (st.caps ? st.caps.eth : '') : (st.caps ? st.caps.stable : '');
+        const cap = !st.caps ? '' : asset === 'eth' ? st.caps.eth : asset === 'sol' ? (st.caps.sol || '') : st.caps.stable;
+        const min = asset === 'sol' && st.solMin ? ' · min ' + esc(st.solMin) : '';
         const q = st.quotes && st.quotes[asset];
         panels.push(
           `<div class="fund-asset" data-asset="${asset}" data-spendable="${esc(spend)}">` +
-          `<div class="fund-asset-head">${esc(Number(b[asset]).toLocaleString('en-US', { maximumFractionDigits: asset === 'eth' ? 5 : 2 }))} ${SYM[asset]} at your deposit address</div>` +
-          `<label class="fund-amt-label">Amount (${SYM[asset]} · max ${esc(spend)}${cap ? ' · cap ' + esc(cap) : ''})</label>` +
+          `<div class="fund-asset-head">${esc(Number(b[asset]).toLocaleString('en-US', { maximumFractionDigits: DP[asset] }))} ${SYM[asset]} at your ${CHAIN[asset]} deposit address</div>` +
+          `<label class="fund-amt-label">Amount (${SYM[asset]} · max ${esc(spend)}${cap ? ' · cap ' + esc(cap) : ''}${min})</label>` +
           `<div class="fund-amount-row"><input data-amt inputmode="decimal" autocomplete="off" spellcheck="false" value="${esc(value)}">` +
           `<button class="ghost" data-max>Max</button></div>` +
           `<div data-routes>${q ? routesHtml(asset, q) : '<div class="hint">Pricing routes…</div>'}</div>` +
-          (asset !== 'eth' && lowGas
+          (asset === 'sol' && lowGas
+            ? `<div class="fund-gaswarn">⚠ This route finishes on Ethereum (Wormhole → Vortex), and your Ethereum deposit address holds almost no ETH — it needs ~${esc(st.gasMinEth)} ETH for gas. Send a little ETH there first.</div>`
+            : asset !== 'eth' && lowGas
             ? `<div class="fund-gaswarn">⚠ This address holds almost no ETH — swaps need ~${esc(st.gasMinEth)} ETH for Ethereum gas. Send a little ETH along with your ${SYM[asset]}.</div>`
             : '') +
           `</div>`);

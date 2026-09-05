@@ -5,15 +5,20 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/wire-format.test.js && node tests/recovery-assertion.test.js && node tests/eth-parity.test.js && node tests/preflight.test.js && node tests/redeem-fallback.test.js && node tests/stale-read.test.js && node tests/demo-isolation.test.js && node tests/send-helpers.test.js && node tests/prices.test.js && node tests/portfolio-model.test.js && node tests/dom-ids.test.js && node tests/assetlinks.test.js",
+    "test": "node tests/wire-format.test.js && node tests/recovery-assertion.test.js && node tests/eth-parity.test.js && node tests/preflight.test.js && node tests/redeem-fallback.test.js && node tests/stale-read.test.js && node tests/demo-isolation.test.js && node tests/send-helpers.test.js && node tests/prices.test.js && node tests/portfolio-model.test.js && node tests/dom-ids.test.js && node tests/assetlinks.test.js && node tests/sol-rail.test.js",
     "keygen": "node tools/keygen.js",
     "infra-keygen": "node tools/infra-keygen.js",
     "infra-deploy": "node tools/infra-deploy.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "@wormhole-foundation/sdk-connect": "^6.1.5",
+    "@wormhole-foundation/sdk-solana": "^6.1.5",
+    "@wormhole-foundation/sdk-solana-core": "^6.1.5",
+    "@wormhole-foundation/sdk-solana-tokenbridge": "^6.1.5",
     "ethers": "^6.17.0",
     "koilib": "^9.0.0"
   },

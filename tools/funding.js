@@ -10,6 +10,12 @@
      Route C: ETH → USDT → vKOIN (Uniswap v4) → Vortex 1:1 → KOIN
      USDC/USDT deposits always take Route C's tail (USDC adds one deep
      stable-pair hop).
+     Route S: SOL → vKOIN on Solana (Jupiter) → Wormhole → Ethereum → Vortex → KOIN
+     A second, Solana transit address takes SOL. The vKOIN that trades on
+     Solana is Wormhole-wrapped Vortex Koin and Vortex has no Solana side,
+     so it rides Wormhole back to the Ethereum transit address and joins
+     Route C's tail from approve_bridge on (tools/sol/). The only SOL route
+     today; others can be quoted beside it and ranked the same way.
 
    The server drives the Ethereum legs with the transit key, then tries to
    complete the bridge redeem itself: the recipient is fixed inside the
@@ -44,6 +50,26 @@ const { fetchEthDepositRecord, isRedeemable, weiToVethSats } = require("./eth/br
 const { opCompleteTransfer, DEFAULT_REDEEM_RC } = require("./eth/koinos-bridge");
 const koindx = require("./eth/koindx");
 const U = require("./eth/units");
+/* Route S. Its packages are optional at boot: without them the wallet runs
+   exactly as before and the rail reports itself off (see solRail). */
+const SC = require("./sol/sol-constants");
+const SU = require("./sol/units");
+const jup = require("./sol/jupiter");
+let sol = null, wormhole = null, SOL_LOAD_ERROR = null;
+try { sol = require("./sol/sol-rpc"); wormhole = require("./sol/wormhole"); }
+catch (e) { SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; }
+/* The Wormhole SDK is ESM and loads lazily; the rail must not advertise
+   itself on the strength of the CommonJS requires alone, or a swap could
+   run and the bridge leg then find no SDK. configure() probes it. */
+let SDK_STATE = wormhole ? "unknown" : "failed";
+function probeSdk() {
+  if (!wormhole) return Promise.resolve(false);
+  if (SDK_STATE === "ok") return Promise.resolve(true);
+  return wormhole.loadSdk().then(
+    () => { SDK_STATE = "ok"; return true; },
+    (e) => { SDK_STATE = "failed"; SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; return false; },
+  );
+}
 
 const S = {
   dataDir: path.join(__dirname, "..", "data"),
@@ -55,6 +81,11 @@ const S = {
   gasSponsorKey: (process.env.ETH_GAS_SPONSOR_KEY || "").trim(),
   gasTopupEth: process.env.ETH_GAS_TOPUP || "0.0015",
   gasMinEth: process.env.ETH_GAS_MIN || "0.0012",
+  /* Route S */
+  maxSol: process.env.FUND_MAX_SOL || "0.5",
+  minSol: process.env.FUND_MIN_SOL || "0.02",
+  solReserve: process.env.SOL_RESERVE || "0.01",
+  solRpcUrls: null, // null → SOLANA_RPC, then the public list
   store: { transit: {}, jobs: {} },
 };
 
@@ -69,7 +100,10 @@ const ETH_STATES = new Set([
   "front_gas", "approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt",
   "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge",
   "bridge_token", "deposit_eth",
+  "wh_redeem", // Route S: hand the Wormhole VAA to Ethereum's token bridge
 ]);
+/* States the server drives with the Solana transit key (Route S). */
+const SOL_STATES = new Set(["sol_swap", "sol_bridge", "awaiting_vaa"]);
 /* Does this job need the user's passkey right now?
 
    Route B's KoinDX swap always does: it SPENDS vETH from the account, so
@@ -91,7 +125,7 @@ function waitsForTap(j) {
 
 const file = () => path.join(S.dataDir, "funding.json");
 const BUSY = new Set();
-let _timer = null, _ethProvider = null;
+let _timer = null, _ethProvider = null, _solConn = null;
 
 function configure(opts) {
   Object.assign(S, opts || {});
@@ -101,6 +135,7 @@ function configure(opts) {
     S.store.transit ||= {}; S.store.jobs ||= {};
   } catch (_) { S.store = { transit: {}, jobs: {} }; }
   if (!S.demo) repairSimulatedJobs();
+  probeSdk().catch(() => {});
   if (!_timer) {
     _timer = setInterval(() => { tick().catch(() => {}); }, TICK_MS);
     if (_timer.unref) _timer.unref();
@@ -128,7 +163,7 @@ function repairSimulatedJobs() {
     const back = j.ethTxHash
       ? { status: "awaiting_signatures", sigStartedAt: Date.now() }
       /* Nothing bridged yet: let Retry work it out from real balances. */
-      : { status: "error", failedAt: "awaiting_signatures" };
+      : { status: "error", failedAt: j.route === "S" ? "sol_swap" : "awaiting_signatures" };
     S.store.jobs[account] = {
       ...j, ...back,
       redeemId: null, swapId: null, koinReceived: null, finishedAt: null,
@@ -160,7 +195,13 @@ function enable(account) {
     S.store.transit[account] = t;
     persist();
   }
-  return { ethAddress: t.ethAddress };
+  /* The Solana transit key — added lazily, so accounts from before Route S
+     get one the first time they are looked at. */
+  if (sol && !t.solAddress) {
+    Object.assign(t, sol.newKeypair(), { solTs: Date.now() });
+    persist();
+  }
+  return { ethAddress: t.ethAddress, solAddress: t.solAddress || null };
 }
 const transitFor = (account) => S.store.transit[account] || null;
 
@@ -168,7 +209,24 @@ async function ethProvider() {
   if (!_ethProvider) _ethProvider = await makeProvider();
   return _ethProvider;
 }
-function dropProvider() { _ethProvider = null; }
+function dropProvider() { _ethProvider = null; _solConn = null; if (wormhole) wormhole.forget(); }
+
+/** Is Route S usable on this server? */
+function solRail() {
+  if (!sol || !wormhole || SDK_STATE === "failed") {
+    return { enabled: false, reason: "Solana support is not installed on this server" + (SOL_LOAD_ERROR ? ` (${SOL_LOAD_ERROR})` : "") };
+  }
+  if (SDK_STATE !== "ok") return { enabled: false, reason: "Solana support is still loading — try again in a moment" };
+  return { enabled: true };
+}
+const railOn = () => solRail().enabled;
+/** SOL a deposit must reach before any of it can move: reserve + minimum. */
+const solFloor = () => SU.formatSol(SU.parseSol(S.solReserve) + SU.parseSol(S.minSol));
+
+async function solConn() {
+  if (!_solConn) _solConn = await sol.makeConnection(S.solRpcUrls || undefined);
+  return _solConn;
+}
 
 async function transitWallet(account) {
   const t = transitFor(account);
@@ -198,6 +256,20 @@ async function balances(account) {
     usdt: U.formatUsdt(usdt), usdtSats: usdt.toString(),
     vkoin: U.formatVkoin(vkoin), vkoinSats: vkoin.toString(),
   };
+  /* Route S balances ride along. A Solana read failing must not take the
+     Ethereum numbers down with it: the card keeps those and says the
+     Solana side is unavailable. */
+  if (railOn() && t.solAddress) {
+    try {
+      const c = await solConn();
+      const [lam, vk] = await Promise.all([sol.solBalance(c, t.solAddress), sol.tokenBalance(c, SC.VKOIN_SOL_MINT, t.solAddress)]);
+      out.sol = SU.formatSol(lam); out.solLamports = lam.toString();
+      out.solVkoin = U.formatVkoin(vk); out.solVkoinSats = vk.toString();
+    } catch (e) {
+      out.solError = String(e.message || e).slice(0, 160);
+      if (isTransient(out.solError)) _solConn = null;
+    }
+  }
   BAL_CACHE.set(account, { at: Date.now(), balances: out });
   return out;
 }
@@ -236,6 +308,17 @@ async function spendableOf(asset, bal) {
     if (wei > cap) wei = cap;
     return { sats: wei, label: ethers.formatEther(wei) };
   }
+  if (asset === "sol") {
+    if (!bal.solLamports) return { sats: 0n, label: "0" };
+    /* The reserve pays Solana's fees and the rent of the accounts the swap
+       and the bridge create; below the minimum those would eat the trade. */
+    const have = BigInt(bal.solLamports), reserve = SU.parseSol(S.solReserve);
+    let lam = have > reserve ? have - reserve : 0n;
+    const cap = SU.parseSol(S.maxSol);
+    if (lam > cap) lam = cap;
+    if (lam < SU.parseSol(S.minSol)) lam = 0n;
+    return { sats: lam, label: SU.formatSol(lam) };
+  }
   const sats = BigInt(asset === "usdc" ? bal.usdcSats : bal.usdtSats);
   const cap = asset === "usdc" ? U.parseUsdc(S.maxStable) : U.parseUsdt(S.maxStable);
   const amt = sats > cap ? cap : sats;
@@ -245,7 +328,7 @@ async function spendableOf(asset, bal) {
 function parseAmount(asset, amount) {
   const s = String(amount == null ? "" : amount).trim();
   if (!/^\d+(\.\d+)?$/.test(s)) throw new Error("Amount must be a positive number");
-  const v = asset === "eth" ? ethers.parseEther(s) : asset === "usdc" ? U.parseUsdc(s) : U.parseUsdt(s);
+  const v = asset === "eth" ? ethers.parseEther(s) : asset === "usdc" ? U.parseUsdc(s) : asset === "sol" ? SU.parseSol(s) : U.parseUsdt(s);
   if (v <= 0n) throw new Error("Amount must be greater than 0");
   return v;
 }
@@ -255,13 +338,28 @@ function parseAmount(asset, amount) {
 async function quoteFor(account, asset, amount) {
   const bal = await balances(account);
   if (!bal) throw new Error("Funding is not enabled for this account");
+  if (asset === "sol") {
+    if (!railOn()) throw new Error(solRail().reason);
+    if (bal.solError) throw new Error("Solana is unreachable right now — " + bal.solError);
+  }
   const spendable = await spendableOf(asset, bal);
   const amt = parseAmount(asset, amount);
   if (amt > spendable.sats) {
     throw new Error(`Max right now is ${spendable.label} ${asset.toUpperCase()}` +
-      (asset === "eth" ? " (after the gas reserve and the safety cap)" : " (balance and safety cap)"));
+      (asset === "eth" ? " (after the gas reserve and the safety cap)"
+        : asset === "sol" ? " (after the fee reserve and the safety cap)" : " (balance and safety cap)"));
   }
+  if (asset === "sol" && amt < SU.parseSol(S.minSol)) throw new Error(`Minimum is ${S.minSol} SOL`);
   if (S.demo) return demoQuoteFor(asset, amt, spendable);
+
+  if (asset === "sol") {
+    /* One route today. Quoted through Jupiter, which routes across Solana's
+       pools (the KOIN/SOL market is on Raydium); the Wormhole and Vortex
+       legs are 1:1, so the swap's output is the KOIN that lands. */
+    const q = await jup.quote({ amount: amt, slippageBps: S.slippageBps });
+    const line = { ...routes.descriptor("S"), koinOut: q.outAmount, koinOutMin: q.outAmountMin, priceImpactPct: q.priceImpactPct, via: q.via };
+    return { asset, amount: SU.formatSol(amt), ...routes.compareRoutes([line]) };
+  }
 
   if (asset === "eth") {
     const p = await ethProvider();
@@ -296,7 +394,7 @@ async function quotes(account) {
   const bal = await balances(account);
   if (!bal) return null;
   const out = {};
-  for (const asset of ["eth", "usdc", "usdt"]) {
+  for (const asset of ["eth", "usdc", "usdt", "sol"]) {
     const sp = await spendableOf(asset, bal);
     if (sp.sats <= 0n) continue;
     try { out[asset] = await quoteFor(account, asset, sp.label); }
@@ -316,7 +414,7 @@ function saveJob(account, j) {
 
 function publicJob(j) {
   if (!j) return null;
-  const { record, ...rest } = j;
+  const { record, vaa, ...rest } = j;
   return { ...rest, recordAmount: record ? String(record.amount) : undefined };
 }
 
@@ -327,19 +425,24 @@ async function start(account, { asset, amount, route } = {}) {
   if (cur && !TERMINAL.has(cur.status)) throw new Error("A swap is already in progress");
   const t = transitFor(account);
   if (!t) throw new Error("Funding is not enabled for this account");
-  if (!["eth", "usdc", "usdt"].includes(asset)) throw new Error("asset must be eth, usdc or usdt");
+  if (!["eth", "usdc", "usdt", "sol"].includes(asset)) throw new Error("asset must be eth, usdc, usdt or sol");
+  if (asset === "sol" && !railOn()) throw new Error(solRail().reason);
 
   const bal = await balances(account);
+  if (asset === "sol" && bal.solError) throw new Error("Solana is unreachable right now — " + bal.solError);
   const spendable = await spendableOf(asset, bal);
   if (spendable.sats <= 0n) {
     throw new Error(asset === "eth"
       ? `Deposit at least ${S.gasMinEth} ETH more — the balance must cover the swap plus gas`
-      : `No ${asset.toUpperCase()} at the deposit address yet`);
+      : asset === "sol"
+        ? `Deposit at least ${solFloor()} SOL in total — the balance must cover the swap, Solana's fees and rent`
+        : `No ${asset.toUpperCase()} at the deposit address yet`);
   }
   const amt = amount == null || String(amount).trim() === "" ? spendable.sats : parseAmount(asset, amount);
   if (amt > spendable.sats) {
     throw new Error(`Max right now is ${spendable.label} ${asset.toUpperCase()}`);
   }
+  if (asset === "sol" && amt < SU.parseSol(S.minSol)) throw new Error(`Minimum is ${S.minSol} SOL`);
 
   if (S.demo) return demoStart(account, asset, amt, route);
 
@@ -350,6 +453,26 @@ async function start(account, { asset, amount, route } = {}) {
     asset, slippageBps: S.slippageBps, koinosRecipient: account,
     ethFrom: t.ethAddress, pendingTx: null, startedAt: Date.now(), taps: 0,
   };
+
+  if (asset === "sol") {
+    const amountSol = SU.formatSol(amt);
+    const q = await quoteFor(account, "sol", amountSol);
+    if (!q.best) throw new Error("SOL can't be quoted right now — try again in a minute");
+    /* The route finishes on Ethereum (the Wormhole redeem, then Vortex's
+       approve and transfer), so the Ethereum transit address needs gas by
+       then. Say so now, before any SOL moves — unless the sponsor fronts it. */
+    if (BigInt(bal.ethWei) < ethers.parseEther(S.gasMinEth) && !S.gasSponsorKey) {
+      throw new Error(`This route finishes on Ethereum (Wormhole → Vortex), so your Ethereum deposit address needs ~${S.gasMinEth} ETH for gas — send a little ETH there first`);
+    }
+    saveJob(account, {
+      ...common, route: "S", status: "sol_swap",
+      solFrom: t.solAddress, amountSol, solLamports: amt.toString(),
+      amountLabel: amountSol + " SOL", estKoinOut: q.best.koinOut,
+      priceImpactPct: q.best.priceImpactPct == null ? undefined : q.best.priceImpactPct,
+      solVkoinBefore: bal.solVkoinSats || "0",
+    });
+    return publicJob(job(account));
+  }
 
   if (asset === "eth") {
     const amountEth = ethers.formatEther(amt);
@@ -442,17 +565,75 @@ async function reconcileRouteC(account, j) {
   return null;
 }
 
+/** Route S's version of the same question, asked from the end of the route
+    backwards — the furthest place the money can be found is where it is:
+    Ethereum, then the Wormhole record, then Solana. `probe` reads the
+    chains; tests hand in a fake one. Every answer clears the pending
+    transaction of the leg it moves away from. */
+async function reconcileRouteS(account, j, probe) {
+  if (j.route !== "S" || j.ethTxHash) return null;
+  const t = transitFor(account);
+  if (!t || !t.solAddress) return null;
+  const P = probe || liveProbeS(t, j);
+  /* vKOIN on Ethereum: Wormhole delivered. All of it bridges — it only
+     ever exists there mid-flow. */
+  const ethVkoin = await P.ethVkoin();
+  if (ethVkoin > 0n) return { status: "approve_bridge", vkoinSats: ethVkoin.toString(), pendingTx: null, pendingSig: null };
+  /* A VAA in hand and not yet honoured on Ethereum: submit it. Honoured
+     with no vKOIN left means it already went on into Vortex — then the
+     record, not the balances, says where things stand. */
+  if (j.vaa) return (await P.vaaRedeemed(j.vaaEvmHash)) ? null : { status: "wh_redeem", pendingTx: null };
+  /* The message is posted: waiting on the guardians. */
+  if (j.whSequence) return { status: "awaiting_vaa", pendingSig: null };
+  if (j.solBridgeSig && (await P.sigConfirmed(j.solBridgeSig))) return { status: "awaiting_vaa", pendingSig: null };
+  /* vKOIN still on Solana: the bridge step is what is left. */
+  const solVkoin = await P.solVkoin();
+  if (solVkoin > 0n) return { status: "sol_bridge", solVkoinSats: solVkoin.toString(), pendingSig: null };
+  /* No vKOIN anywhere after a bridge attempt: the reply may have been lost
+     after the send, but the posted message is on the chain. */
+  if (j.status === "sol_bridge" || j.failedAt === "sol_bridge" || j.solBridgeSig) {
+    const found = await P.recentTransfer();
+    if (found) {
+      return { status: "awaiting_vaa", solBridgeSig: found.txid, whEmitter: found.emitter, whSequence: found.sequence, pendingSig: null, vaaStartedAt: Date.now() };
+    }
+  }
+  /* Nothing moved and the swap is still the outstanding step (it never
+     confirmed): a send whose confirmation was lost is dropped here and
+     re-checked against the vKOIN balance there. A job already past its
+     swap is never sent back to it — that would swap the deposit twice. */
+  const swapOutstanding = !j.solSwapSig && (j.status === "sol_swap" || j.failedAt === "sol_swap");
+  if (swapOutstanding && j.pendingSig && !(await P.sigConfirmed(j.pendingSig))) return { status: "sol_swap", pendingSig: null, pendingSigExpiry: null };
+  return null;
+}
+function liveProbeS(t, j) {
+  return {
+    ethVkoin: async () => swap.balanceOf(await ethProvider(), RC.VKOIN, t.ethAddress),
+    vaaRedeemed: async (evmHash) => wormhole.isRedeemedOnEthereum(await ethProvider(), evmHash),
+    sigConfirmed: async (sig) => { const st = await sol.signatureStatus(await solConn(), sig); return !!(st && st.confirmed); },
+    solVkoin: async () => sol.tokenBalance(await solConn(), SC.VKOIN_SOL_MINT, t.solAddress),
+    /* Only transfers newer than this job's swap can be this job's. */
+    recentTransfer: async () => wormhole.findRecentTransfer({
+      rpcUrl: (await solConn()).rpcEndpoint, address: t.solAddress,
+      stopAt: j.solSwapSig || null, since: j.startedAt ? Math.floor(j.startedAt / 1000) - 300 : null,
+    }),
+  };
+}
+const reconcile = (account, j) => (j.route === "S" ? reconcileRouteS(account, j) : reconcileRouteC(account, j));
+
 async function resume(account) {
   const j = job(account);
   if (!j || j.status !== "error" || !j.failedAt) throw new Error("Nothing to resume");
   let back = { status: j.failedAt === "awaiting_redeem" ? "awaiting_signatures" : j.failedAt };
   if (!S.demo) {
-    try { back = (await reconcileRouteC(account, j)) || back; }
+    try { back = (await reconcile(account, j)) || back; }
     catch (_) { /* can't read the chain right now — retry from the record */ }
   }
+  /* Retry starts its leg clean: no pending transaction on either chain (a
+     Solana send that is at "error" has failed or lapsed — every step
+     re-reads the chain before sending), and the counters back to zero. */
   saveJob(account, {
-    ...j, ...back, error: null, failedAt: null, pendingTx: null,
-    redeemAttempts: 0, sigStartedAt: Date.now(),
+    ...j, ...back, error: null, failedAt: null, pendingTx: null, pendingSig: null, pendingSigExpiry: null,
+    redeemAttempts: 0, resends: 0, gasFronts: 0, sigStartedAt: Date.now(), vaaStartedAt: Date.now(),
   });
   return publicJob(job(account));
 }
@@ -482,6 +663,7 @@ async function tick() {
          balances. So each side only ever touches its own. */
       if (S.demo !== !!j.demo) continue;
       if (S.demo) await demoAdvance(account, j);
+      else if (SOL_STATES.has(j.status)) await advanceSol(account, j);
       else if (ETH_STATES.has(j.status)) await advanceEth(account, j);
       else if (j.status === "awaiting_signatures") await pollGuardians(account, j);
       else if (j.status === "awaiting_redeem") await autoRedeem(account, j);
@@ -504,7 +686,7 @@ const MAX_RECOVERIES = 3;
 async function failOrRecover(account, j, msg) {
   if (!S.demo && (j.recoveries || 0) < MAX_RECOVERIES) {
     try {
-      const at = await reconcileRouteC(account, j);
+      const at = await reconcile(account, j);
       /* Only a DIFFERENT step is progress. Re-entering the step that just
          failed — or bouncing between two of them — is a loop, not a
          recovery, so the counter ends it and the user sees the real error. */
@@ -520,7 +702,7 @@ async function failOrRecover(account, j, msg) {
 }
 
 const isTransient = (msg) =>
-  /ECONN|ETIMEDOUT|EAI_AGAIN|timeout|network|missing response|fetch failed|socket|throttl|rate limit|\b(429|502|503|504)\b|SERVER_ERROR|could not detect|no ethereum rpc/i.test(String(msg));
+  /ECONN|ETIMEDOUT|EAI_AGAIN|timeout|network|missing response|fetch failed|socket|throttl|rate limit|\b(429|502|503|504)\b|SERVER_ERROR|could not detect|no ethereum rpc|no solana rpc|block height exceeded|blockhash not found|not confirmed in \d|node is behind|transaction was not confirmed/i.test(String(msg));
 
 async function receipt(hash) {
   const r = await (await ethProvider()).getTransactionReceipt(hash);
@@ -590,6 +772,35 @@ async function advanceEth(account, j) {
       const { hash } = await swap.sendTx(wallet, tx);
       return saveJob(account, { ...j, pendingTx: hash, minVkoinOut: minVkoinOut.toString(), vkoinBefore });
     }
+    case "wh_redeem": { // Route S: receive the vKOIN Wormhole is holding for us
+      if (!railOn()) throw new Error(solRail().reason);
+      /* Idempotent — the bridge remembers every VAA it has honoured. */
+      if (await wormhole.isRedeemedOnEthereum(p, j.vaaEvmHash)) {
+        const have = await swap.balanceOf(p, RC.VKOIN, wallet.address);
+        if (have > 0n) return saveJob(account, { ...j, status: "approve_bridge", vkoinSats: have.toString() });
+        /* Honoured, yet nothing here: this VAA was not this job's transfer
+           (an older one from the address history). Drop it and look again
+           from Solana, where this job's vKOIN or its own transfer still is —
+           but not forever. */
+        if ((j.vaaDrops || 0) >= 2) throw new Error("Wormhole says the transfer was received on Ethereum, but the deposit address holds no vKOIN");
+        return saveJob(account, {
+          ...j, status: "sol_bridge", vaa: null, vaaEvmHash: null, vaaAmount: null, whEmitter: null, whSequence: null, solBridgeSig: null,
+          vaaDrops: (j.vaaDrops || 0) + 1,
+        });
+      }
+      /* Three Ethereum transactions follow; the gas is there or it is
+         fronted — a bounded number of times, so a top-up smaller than the
+         minimum, or a node that has not seen it yet, cannot drain the
+         sponsor. */
+      if ((await p.getBalance(wallet.address)) < ethers.parseEther(S.gasMinEth)) {
+        if (!S.gasSponsorKey) throw new Error(`The Ethereum deposit address needs ~${S.gasMinEth} ETH for gas to receive the vKOIN from Wormhole — send a little ETH there, then Retry`);
+        if ((j.gasFronts || 0) >= 2) throw new Error(`Gas was fronted twice and the Ethereum deposit address still reads below ${S.gasMinEth} ETH — check ETH_GAS_TOPUP against ETH_GAS_MIN, then Retry`);
+        return saveJob(account, { ...j, status: "front_gas", afterGas: "wh_redeem", gasFronts: (j.gasFronts || 0) + 1 });
+      }
+      const vkoinBefore = (await swap.balanceOf(p, RC.VKOIN, wallet.address)).toString();
+      const { hash } = await swap.sendTx(wallet, wormhole.buildCompleteTransferTx(j.vaa));
+      return saveJob(account, { ...j, pendingTx: hash, vkoinBefore });
+    }
     case "approve_bridge": {
       const bridgeAddr = require("./eth/bridge-constants").BRIDGE[S.network].ethBridge;
       const cur = await swap.allowance(p, RC.VKOIN, wallet.address, bridgeAddr);
@@ -657,10 +868,109 @@ async function onEthConfirmed(account, j, r) {
       if (got <= 0n) throw new Error("USDT→vKOIN swap produced no vKOIN");
       return saveJob(account, { ...base, status: "approve_bridge", vkoinSats: got.toString() });
     }
+    case "wh_redeem": {
+      const got = await deliveredBy(p, r, RC.VKOIN, wallet.address, j.vkoinBefore);
+      if (got <= 0n) throw new Error("The Wormhole redeem delivered no vKOIN");
+      return saveJob(account, { ...base, status: "approve_bridge", vkoinSats: got.toString() });
+    }
     case "approve_bridge":
       return saveJob(account, { ...base, status: "bridge_token" });
     case "bridge_token":
       return saveJob(account, { ...base, status: "awaiting_signatures", ethTxHash: confirmedHash, sigStartedAt: Date.now() });
+  }
+}
+
+/* ---------------- Route S: the Solana legs ----------------
+   Each leg is one transaction, sent and then tracked by its signature across
+   ticks — like the Ethereum legs and their receipts — so a restart resumes
+   from the chain, not from memory. */
+
+async function advanceSol(account, j) {
+  if (!railOn()) throw new Error(solRail().reason);
+  const t = transitFor(account);
+  if (!t || !t.solAddress) throw new Error("This account has no Solana deposit address");
+  const c = await solConn();
+  if (j.pendingSig) {
+    const st = await sol.signatureStatus(c, j.pendingSig);
+    if (st && st.err) throw new Error(`Solana transaction failed (${st.err.slice(0, 120)})`);
+    if (st && st.confirmed) return onSolConfirmed(account, j);
+    /* Unknown, and its blockhash has lapsed: it can never land now. Drop it
+       and let the step run again — every step re-reads the chain first, so
+       a transaction the node merely lost track of is not sent twice. */
+    if (j.pendingSigExpiry && (await sol.blockHeight(c)) > Number(j.pendingSigExpiry)) {
+      return saveJob(account, { ...j, pendingSig: null, pendingSigExpiry: null, resends: (j.resends || 0) + 1 });
+    }
+    return;
+  }
+  switch (j.status) {
+    case "sol_swap": {
+      /* On-chain truth first: vKOIN above the starting balance means an
+         earlier send landed after all. */
+      const have = await sol.tokenBalance(c, SC.VKOIN_SOL_MINT, t.solAddress);
+      if (have > BigInt(j.solVkoinBefore || 0)) return saveJob(account, { ...j, status: "sol_bridge", solVkoinSats: have.toString() });
+      /* A swap that confirmed once is never sent again, whatever a lagging
+         node says about the balance — the deposit must not be swapped twice. */
+      if (j.solSwapSig) throw new Error("The SOL → vKOIN swap already went through — waiting for its vKOIN to show at the deposit address");
+      if ((j.resends || 0) > 3) throw new Error("The SOL → vKOIN swap keeps expiring before it confirms — Retry when Solana is less busy");
+      const q = await jup.quote({ amount: j.solLamports, slippageBps: j.slippageBps });
+      const tx = await jup.swapTx({ quote: q, userPublicKey: t.solAddress });
+      const sig = await sol.signAndSend(c, sol.keypairFrom(t.solSecret), tx.swapTransaction);
+      return saveJob(account, { ...j, pendingSig: sig, pendingSigExpiry: tx.lastValidBlockHeight, minVkoinOut: q.outAmountMin, solVkoinBefore: have.toString() });
+    }
+    case "sol_bridge": {
+      /* vKOIN only ever sits on this address mid-flow: all of it belongs to
+         this job, and a remainder would be stranded. The bridge spends from
+         the associated token account, so that balance is the amount; vKOIN
+         in any other account of the key is reported, not moved. */
+      const total = await sol.tokenBalance(c, SC.VKOIN_SOL_MINT, t.solAddress);
+      const have = await sol.ataBalance(c, SC.VKOIN_SOL_MINT, t.solAddress);
+      if (have <= 0n) {
+        throw new Error(total > 0n
+          ? "vKOIN is at the Solana deposit address but not in the token account the bridge spends from — it needs consolidating by hand"
+          : "No vKOIN at the Solana deposit address to bridge");
+      }
+      const built = await wormhole.buildTransfer({ rpcUrl: c.rpcEndpoint, secret: t.solSecret, amountSats: have, ethRecipient: t.ethAddress });
+      await sol.sendRaw(c, built.raw);
+      return saveJob(account, {
+        ...j, pendingSig: built.signature, pendingSigExpiry: built.lastValidBlockHeight, solVkoinSats: have.toString(),
+        solVkoinElsewhere: total > have ? (total - have).toString() : undefined,
+      });
+    }
+    case "awaiting_vaa": {
+      if (!j.whSequence) {
+        const id = await wormhole.messageIdFromTx({ rpcUrl: c.rpcEndpoint, txid: j.solBridgeSig });
+        if (!id) return; // the node does not have the transaction yet
+        return saveJob(account, { ...j, whEmitter: id.emitter, whSequence: id.sequence });
+      }
+      const got = await wormhole.fetchVaa({ emitter: j.whEmitter, sequence: j.whSequence });
+      if (!got) {
+        if (Date.now() - (j.vaaStartedAt || j.startedAt || 0) > POLL_TIMEOUT_MS) {
+          saveJob(account, { ...j, status: "error", error: "Wormhole's guardians haven't signed the transfer yet. Your vKOIN is in the bridge — Retry keeps waiting.", failedAt: "awaiting_vaa" });
+        }
+        return;
+      }
+      /* The VAA names the recipient; it must be our Ethereum transit
+         address, or the money is going somewhere we do not control. */
+      const parsed = await wormhole.parseTransferVaa(got.hex, { expectRecipient: t.ethAddress });
+      return saveJob(account, { ...j, status: "wh_redeem", vaa: got.hex, vaaEvmHash: parsed.evmHash, vaaAmount: parsed.amount });
+    }
+  }
+}
+
+async function onSolConfirmed(account, j) {
+  const t = transitFor(account);
+  const c = await solConn();
+  const sig = j.pendingSig;
+  const base = { ...j, pendingSig: null, pendingSigExpiry: null };
+  switch (j.status) {
+    case "sol_swap": {
+      let got = await sol.deliveredByTx(c, sig, SC.VKOIN_SOL_MINT, t.solAddress);
+      if (got == null) got = (await sol.tokenBalance(c, SC.VKOIN_SOL_MINT, t.solAddress)) - BigInt(j.solVkoinBefore || 0);
+      if (got <= 0n) throw new Error("SOL → vKOIN swap produced no vKOIN");
+      return saveJob(account, { ...base, status: "sol_bridge", solSwapSig: sig, solVkoinSats: got.toString() });
+    }
+    case "sol_bridge":
+      return saveJob(account, { ...base, status: "awaiting_vaa", solBridgeSig: sig, vaaStartedAt: Date.now() });
   }
 }
 
@@ -815,16 +1125,19 @@ function onTapDone(account, step, txid) {
 const DEMO_RATE_ETH_KOIN = 4200; // via route C
 const DEMO_RATE_ETH_KOIN_B = 1600; // via the shallow KoinDX pool
 const DEMO_RATE_USD_KOIN = 1.85;
+const DEMO_RATE_SOL_KOIN = 330; // via route S
 
 function demoBalances(account) {
   const t = S.store.transit[account];
-  t.demoBal ||= { eth: "0.012", usdc: "18.5", usdt: "0" };
+  t.demoBal ||= { eth: "0.012", usdc: "18.5", usdt: "0", sol: "0.35" };
   const b = t.demoBal;
+  if (b.sol == null) b.sol = "0.35"; // a record from before Route S
   return {
     eth: b.eth, ethWei: ethers.parseEther(b.eth).toString(),
     usdc: b.usdc, usdcSats: U.parseUsdc(b.usdc).toString(),
     usdt: b.usdt, usdtSats: U.parseUsdt(b.usdt).toString(),
     vkoin: "0", vkoinSats: "0",
+    ...(railOn() && t.solAddress ? { sol: b.sol, solLamports: SU.parseSol(b.sol).toString(), solVkoin: "0", solVkoinSats: "0" } : {}),
   };
 }
 function demoQuoteFor(asset, amt, spendable) {
@@ -838,6 +1151,12 @@ function demoQuoteFor(asset, amt, spendable) {
     for (const q of qs) q.koinOutMin = ethSwap.applySlippage(q.koinOut, S.slippageBps).toString();
     return { asset, amount: ethers.formatEther(amt), ...routes.compareRoutes(qs) };
   }
+  if (asset === "sol") {
+    const solAmt = Number(SU.formatSol(amt));
+    const line = { ...routes.descriptor("S"), koinOut: sats(solAmt * DEMO_RATE_SOL_KOIN), priceImpactPct: Math.round(solAmt * 300) / 100, via: ["Raydium"] };
+    line.koinOutMin = ethSwap.applySlippage(line.koinOut, S.slippageBps).toString();
+    return { asset, amount: SU.formatSol(amt), ...routes.compareRoutes([line]) };
+  }
   const usd = Number(asset === "usdc" ? U.formatUsdc(amt) : U.formatUsdt(amt));
   const line = { ...routes.descriptor("C"), koinOut: sats(usd * DEMO_RATE_USD_KOIN) };
   line.koinOutMin = ethSwap.applySlippage(line.koinOut, S.slippageBps).toString();
@@ -850,10 +1169,13 @@ function demoStart(account, asset, amt, route) {
     : q.best;
   const first = asset === "eth"
     ? (chosen.id === "C" ? "swap_eth_usdt" : "deposit_eth")
+    : asset === "sol" ? "sol_swap"
     : (asset === "usdc" ? "approve_v3_usdc" : "approve_permit2");
   saveJob(account, {
     asset, route: chosen.id, status: first, demo: true, koinosRecipient: account,
     ethFrom: S.store.transit[account].ethAddress,
+    solFrom: asset === "sol" ? S.store.transit[account].solAddress : undefined,
+    priceImpactPct: asset === "sol" ? chosen.priceImpactPct : undefined,
     amountLabel: q.amount + " " + asset.toUpperCase(),
     spentSats: amt.toString(),
     estKoinOut: chosen.koinOut,
@@ -863,9 +1185,10 @@ function demoStart(account, asset, amt, route) {
 }
 const DEMO_FLOW_C = ["approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 const DEMO_FLOW_B = ["deposit_eth", "awaiting_signatures", "awaiting_redeem"];
+const DEMO_FLOW_S = ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 async function demoAdvance(account, j) {
   if (j.status === "awaiting_redeem") { finishRedeem(account, "0xdemo-redeem"); return; }
-  const flow = j.route === "B" ? DEMO_FLOW_B : DEMO_FLOW_C;
+  const flow = j.route === "B" ? DEMO_FLOW_B : j.route === "S" ? DEMO_FLOW_S : DEMO_FLOW_C;
   const at = flow.indexOf(j.status);
   if (at < 0) return;
   let next = flow[at + 1];
@@ -880,7 +1203,7 @@ async function demoAdvance(account, j) {
     /* The chosen amount left the deposit address. */
     const t = S.store.transit[account];
     const spent = BigInt(j.spentSats || 0);
-    const dec = { eth: 18, usdc: 6, usdt: 6 }[j.asset];
+    const dec = { eth: 18, usdc: 6, usdt: 6, sol: 9 }[j.asset];
     const cur = ethers.parseUnits(t.demoBal[j.asset], dec);
     t.demoBal[j.asset] = ethers.formatUnits(cur > spent ? cur - spent : 0n, dec);
   }
@@ -895,7 +1218,9 @@ async function status(account) {
   const j = job(account);
   const out = {
     enabled: true, demo: S.demo || undefined, ethAddress: t.ethAddress, job: publicJob(j),
-    caps: { eth: S.maxEth, stable: S.maxStable },
+    solAddress: t.solAddress || null, solRail: solRail(),
+    caps: { eth: S.maxEth, stable: S.maxStable, sol: S.maxSol },
+    solMin: S.minSol, solFloor: solFloor(),
     gasMinEth: S.gasMinEth, gasFronting: !!S.gasSponsorKey,
     slippageBps: S.slippageBps,
   };
@@ -908,6 +1233,7 @@ async function status(account) {
         eth: (await spendableOf("eth", out.balances)).label,
         usdc: (await spendableOf("usdc", out.balances)).label,
         usdt: (await spendableOf("usdt", out.balances)).label,
+        sol: (await spendableOf("sol", out.balances)).label,
       };
     }
     if (!j || TERMINAL.has(j.status)) out.quotes = await quotes(account);
@@ -922,4 +1248,8 @@ module.exports = {
   tick,
   /* the gas-reserve maths, exposed so a test can price it at a known fee */
   _spendableOf: spendableOf,
+  /* Route S's where-is-the-money logic, exposed so a test can feed it facts */
+  _reconcileRouteS: reconcileRouteS,
+  _solRail: solRail,
+  _sdkReady: probeSdk,
 };

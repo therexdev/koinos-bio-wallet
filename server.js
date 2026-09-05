@@ -795,11 +795,17 @@ async function connectChain() {
 function applyMode() {
   veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
   if (!DEMO) veive.reconcile();
-  /* The ETH funding rail runs live only on mainnet (the Vortex bridge and
-     Uniswap pools are mainnet); everywhere else it simulates. */
+  /* The funding rails run live only on mainnet (the Vortex bridge, the
+     Uniswap pools, Jupiter and Wormhole are mainnet); everywhere else they
+     simulate. */
   const fundingDemo = DEMO || CFG.network !== 'mainnet';
   funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
   console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
+  /* The Solana rail probes its (ESM) SDK asynchronously; report it once known. */
+  funding._sdkReady().then(() => {
+    const solRail = funding._solRail();
+    console.log(`funding:  SOL→KOIN ${!solRail.enabled ? 'OFF — ' + solRail.reason : fundingDemo ? 'demo' : 'LIVE (Jupiter + Wormhole + Vortex)'}`);
+  }).catch(() => {});
 }
 
 (async () => {

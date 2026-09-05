@@ -104,24 +104,49 @@ integer rather than the number on screen — a float rounds, and an "all" that
 leaves dust behind is not all. Nothing is held back for fees because the
 sponsor pays the mana.
 
-## Fund with ETH · USDC · USDT
+## Fund with ETH · USDC · USDT · SOL
 
-Every account can mint a personal **Ethereum deposit address**. Send it ETH,
-USDC or USDT from any wallet or exchange, pick an amount, and one tap swaps it
-into KOIN on the smart account — through the better of the two routes ported
-from [Koinos Node Desktop](https://github.com/therexdev/Koinos-Node)'s
-Fund-node pipeline (every calldata builder is proven **byte-identical** to
+Every account gets a personal **Ethereum deposit address** and a personal
+**Solana deposit address**. Send ETH, USDC or USDT to the first, or SOL to the
+second, from any wallet or exchange; pick an amount, and one tap swaps it into
+KOIN on the smart account — through the best of the routes ported from
+[Koinos Node Desktop](https://github.com/therexdev/Koinos-Node)'s Fund-node
+pipeline (every Ethereum calldata builder is proven **byte-identical** to
 that battle-tested implementation: `node tests/eth-parity.test.js`):
 
 | route | path | notes |
 |---|---|---|
 | B | ETH → Vortex (vETH) → KoinDX vETH/KOIN → KOIN | the original path; shallow pool |
 | C | ETH → USDT → vKOIN (Uniswap v4) → Vortex 1:1 → KOIN | usually far more KOIN per ETH |
+| S | SOL → vKOIN on Solana (Jupiter) → Wormhole → Ethereum → Vortex 1:1 → KOIN | the only SOL route today |
 
 USDC and USDT deposits ride Route C's tail (USDC adds one hop through the
-deepest stable pair on Ethereum). The server quotes both routes live, shows
-the comparison, and executes the winner. Amounts are capped while the rail is
-new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150).
+deepest stable pair on Ethereum). The server quotes every route live, shows
+the comparison, and executes the winner. Amounts are capped while the rails
+are new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150, `FUND_MAX_SOL` 0.5).
+
+**Why SOL goes through Ethereum.** The vKOIN that trades on Solana (mint
+`8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G`, the Raydium KOIN/SOL pair) is
+Vortex Koin **wrapped by Wormhole** — the mint is exactly the Wormhole token
+bridge's wrapped-asset account for the Ethereum vKOIN contract, and the
+Vortex bridge has no Solana side. So the only way it becomes native KOIN is
+the way it came: Jupiter swaps SOL to vKOIN on Solana, the Wormhole token
+bridge burns it there and the guardians sign a VAA, the Ethereum token bridge
+releases the original vKOIN to the account's Ethereum deposit address, and
+from there it joins Route C's tail (approve, Vortex transfer, guardian
+signatures, sponsor redeem). The Wormhole VAA names the recipient, so like
+the Vortex record it can only ever deliver to our transit address. Because
+the route finishes on Ethereum it needs Ethereum gas there — fronted by
+`ETH_GAS_SPONSOR_KEY` when set, otherwise the card asks for a little ETH at
+the Ethereum deposit address before any SOL moves. The Solana side keeps a
+small reserve (`SOL_RESERVE` 0.01) for fees and account rent and refuses
+trades under `FUND_MIN_SOL` (0.02); Jupiter's quote carries the price
+impact, and the card says so when the pool is shallow. Each Solana leg is one
+transaction tracked by its signature across restarts, and a job that lost a
+reply is put back where the chains say it is (`node tests/sol-rail.test.js`).
+The Solana packages (`@solana/web3.js` and four `@wormhole-foundation/*`
+modules) are optional at boot: without them the rail reports itself off and
+everything else runs as before.
 
 **How custody works here — stated plainly:** the deposit address is a
 *transit* address whose key the server holds (like the bootstrap key). The
@@ -282,6 +307,8 @@ budgets, and a sponsor mana floor for sends.
 
 ## Run it
 
+Node 20.19 or newer (the Solana rail's packages need it; `engines` says so).
+
 ```bash
 npm install
 npm start            # http://localhost:3000 — DEMO mode until configured
@@ -342,11 +369,17 @@ node server.js
 | `MAX_TRANSFERS_PER_DAY` | `30` | per-address daily transfer budget (per-IP is 2×) |
 | `MIN_SPONSOR_MANA` | `5` | refuse transfers when sponsor mana is below this |
 | `ETH_RPC` | *(public list)* | Ethereum RPC endpoint(s), comma-separated by priority |
-| `ETH_GAS_SPONSOR_KEY` | — | Ethereum key that fronts gas for stablecoin-only deposits (optional) |
+| `ETH_GAS_SPONSOR_KEY` | — | Ethereum key that fronts gas for stablecoin-only and SOL deposits (optional) |
 | `ETH_GAS_TOPUP` | `0.0015` | ETH fronted per job when gas is short |
 | `FUND_MAX_ETH` | `0.05` | per-swap ETH cap on the funding rail |
 | `FUND_MAX_STABLE` | `150` | per-swap USDC/USDT cap (USD) |
 | `FUND_SLIPPAGE_BPS` | `150` | slippage floor for every funding swap (1.5%) |
+| `SOLANA_RPC` | *(public list)* | Solana RPC endpoint(s), comma-separated by priority — the public one is rate-limited, set your own |
+| `JUPITER_API` | *(lite, keyless)* | Jupiter swap API base; set with `JUPITER_API_KEY` for the keyed `api.jup.ag` tier |
+| `JUPITER_API_KEY` | — | Jupiter API key (optional) |
+| `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
+| `FUND_MIN_SOL` | `0.02` | smallest SOL swap the rail accepts |
+| `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | `ANDROID_SHA256_FINGERPRINTS` | — | SHA-256 fingerprint(s) of the Android app's signing certificate, comma-separated — serves `/.well-known/assetlinks.json` (see **Android app**) |
 | `ANDROID_PACKAGE` | `com.usekoinos.biowallet` | the Android app's package name |
