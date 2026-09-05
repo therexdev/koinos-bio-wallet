@@ -11,6 +11,8 @@ const Fund = (() => {
   let TIMER = null;
   let LAST = null;
   let BUSY = false;
+  let QR_SHOWN = null;        // the deposit address the QR tile currently shows
+  let LAST_JOB_STATUS = null; // to notice a job finishing while another tab is up
   const DEBOUNCE = {};
 
   const $ = (s) => document.querySelector(s);
@@ -179,12 +181,28 @@ const Fund = (() => {
     } finally { BUSY = false; btn.disabled = false; }
   }
 
+  /* The mobile shell's extras (tab dot, SIMULATED chip, deposit QR, dimmed
+     zero rows). Each is null-guarded: the card must keep working in a page
+     that has none of these elements. */
+  const opt = (sel, fn) => { const n = $(sel); if (n) fn(n); };
+
   function render(st) {
     $('#fund-setup').hidden = !!st.enabled;
     $('#fund-body').hidden = !st.enabled;
+    opt('#buy-sim-chip', (n) => { n.hidden = !st.demo; });
     if (!st.enabled) return;
 
     $('#fund-eth-addr').textContent = st.ethAddress;
+    /* Receive and UI are top-level consts of later scripts: lexical globals,
+       so typeof — never window.X — is the existence check. */
+    if (st.ethAddress && st.ethAddress !== QR_SHOWN && typeof Receive !== 'undefined') {
+      opt('#fund-eth-qr', (n) => {
+        QR_SHOWN = st.ethAddress;
+        n.classList.remove('fail');
+        Receive.render(n, st.ethAddress, { raw: true, cell: 4 })
+          .catch(() => { QR_SHOWN = null; n.classList.add('fail'); n.textContent = 'QR unavailable — copy the address instead'; });
+      });
+    }
     const b = st.balances;
 
     /* Deposit balances as first-class wallet stats, next to KOIN and mana. */
@@ -204,6 +222,8 @@ const Fund = (() => {
         card.hidden = !held;
         if (held) $('#stat-bridge').innerHTML = `${koin(held)} KOIN` + tag;
       }
+      opt('#stat-eth-row', (n) => { n.dataset.zero = b && Number(b.eth) > 0 ? '0' : '1'; });
+      opt('#stat-stable-row', (n) => { n.dataset.zero = b && (Number(b.usdc) > 0 || Number(b.usdt) > 0) ? '0' : '1'; });
     }
 
     /* the in-card strip mirrors the same numbers */
@@ -247,6 +267,15 @@ const Fund = (() => {
     const jobActive = j && !['done', 'error'].includes(j.status);
     $('#fund-idle').hidden = !!jobActive || (j && j.status === 'error');
     $('#fund-job').hidden = !j;
+    opt('#fund-convert-busy', (n) => { n.hidden = !$('#fund-idle').hidden; });
+    opt('#fund-land-idle', (n) => { n.hidden = !!j; });
+    opt('#tabdot-convert', (n) => { n.hidden = !j; n.classList.toggle('pulse', !!(j && needsTap(j))); });
+    /* KOIN landing while the person is on another tab deserves a word. */
+    if (j && j.status === 'done' && LAST_JOB_STATUS && LAST_JOB_STATUS !== 'done') {
+      const tab = $('#tab-convert');
+      if (tab && tab.hidden && typeof UI !== 'undefined') UI.toast('KOIN landed — see Home');
+    }
+    LAST_JOB_STATUS = j ? j.status : null;
 
     /* per-asset amount + route panels (only rebuilt when idle, so typing
        is never clobbered by the poll) */

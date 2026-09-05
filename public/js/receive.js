@@ -34,17 +34,18 @@ const Receive = (() => {
     `koinos:${address}${amount ? `?amount=${encodeURIComponent(amount)}` : ''}`;
 
   /** Render the QR as inline SVG into `el`. Error level M: a phone camera
-      at arm's length reads it fine and the code stays small. */
-  async function render(el, address, { amount = null, cell = 6, margin = 2 } = {}) {
+      at arm's length reads it fine and the code stays small. `raw` encodes
+      the text as given (an Ethereum deposit address is not a koinos: URI). */
+  async function render(el, address, { amount = null, cell = 6, margin = 2, raw = false } = {}) {
     const qrcode = await loadEncoder();
     const q = qrcode(0, 'M');
-    q.addData(paymentUri(address, amount));
+    q.addData(raw ? String(address) : paymentUri(address, amount));
     q.make();
     el.innerHTML = q.createSvgTag({ cellSize: cell, margin, scalable: true });
     const svg = el.querySelector('svg');
     if (svg) {
       svg.setAttribute('role', 'img');
-      svg.setAttribute('aria-label', 'QR code of your Koinos address');
+      svg.setAttribute('aria-label', raw ? 'QR code' : 'QR code of your Koinos address');
       svg.style.width = '100%'; svg.style.height = 'auto';
     }
     return q.getModuleCount();

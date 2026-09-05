@@ -48,15 +48,30 @@
   const badge = $('#net-badge');
   if (cfg.demo) { badge.textContent = 'demo'; badge.classList.add('demo'); $('#demo-note').hidden = false; }
   else badge.textContent = cfg.testnet ? (cfg.networkLabel || '').replace('Koinos ', '') : 'mainnet';
+  badge.classList.add(cfg.demo ? 'demo' : cfg.testnet ? 'testnet' : 'mainnet'); // CSS cannot match text
   $('#sym').textContent = cfg.nativeSymbol || 'KOIN';
   $('#sym2').textContent = cfg.nativeSymbol || 'KOIN';
+  UI.setContext({ cfg });
+
+  /* Deep links from the home-screen shortcuts (?open=send, ?tab=convert):
+     kept until the wallet is open, applied once, and scrubbed from the URL
+     so a reload does not replay them. */
+  let PENDING_INTENT = null;
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('open') || q.get('tab')) PENDING_INTENT = { open: q.get('open'), tab: q.get('tab') };
+    if ([...q.keys()].length) history.replaceState(null, '', location.pathname);
+  } catch (_) {}
 
   const VIEWS = ['#view-landing', '#view-wallet', '#view-recover'];
   const show = (view) => {
     for (const v of VIEWS) $(v).hidden = v !== view;
     $('#btn-signout').hidden = view !== '#view-wallet';
-    if (view === '#view-wallet') { paint(); Fund.refresh(); }
-    else Fund.stop();
+    UI.onView(view);
+    if (view === '#view-wallet') {
+      paint(); Fund.refresh();
+      if (PENDING_INTENT) { UI.applyIntent(PENDING_INTENT); PENDING_INTENT = null; }
+    } else Fund.stop();
     if (view === '#view-landing') refreshLandingSupport(); // support can change (recovery adds a passkey)
   };
 
@@ -209,27 +224,45 @@
     }
   });
 
-  /* ---------------- wallet view ---------------- */
+  /* ---------------- wallet view ----------------
+     Two reads: /api/account for the account's own state (activation step,
+     credentials, the exact KOIN integer "Send all" needs) and /api/portfolio
+     for what the home screen shows (every balance, priced). The screen is
+     painted by UI from the portfolio model; a failed read keeps the last
+     good numbers rather than blanking them. */
+  let PAINTING = false, PAINT_AGAIN = false;
   async function paint() {
-    if (!ADDRESS) return;
+    if (!ADDRESS || document.hidden) return;
+    /* A request that lands mid-poll (a send just confirmed, KOIN just
+       landed) is not dropped: it runs once more as soon as this one ends. */
+    if (PAINTING) { PAINT_AGAIN = true; return; }
+    PAINTING = true;
     $('#addr').textContent = ADDRESS;
+    UI.setContext({ address: ADDRESS, cfg, recovery: RECOVERY, active: ACTIVE, refresh: paint });
+    const credParam = RECOVERY ? RECOVERY.credentialId : (Passkey.storedId() || '');
+    const account = api('/api/account?address=' + encodeURIComponent(ADDRESS)
+      + '&credentialId=' + encodeURIComponent(credParam))
+      .then((a) => {
+        BALANCE_SATS = String(a.koinSats == null ? '' : a.koinSats);
+        $('#mana').textContent = Number(a.mana || 0).toFixed(2);
+        takeSmart(a.smart);
+      })
+      .catch(() => { BALANCE_SATS = ''; $('#mana').textContent = '—'; });
+    const portfolio = Portfolio.load(ADDRESS, api);   // resolves with {error} rather than rejecting
     try {
-      const credParam = RECOVERY ? RECOVERY.credentialId : (Passkey.storedId() || '');
-      const a = await api('/api/account?address=' + encodeURIComponent(ADDRESS)
-        + '&credentialId=' + encodeURIComponent(credParam));
-      BALANCE_SATS = String(a.koinSats == null ? '' : a.koinSats);
-      $('#bal').textContent = Number(a.koin || 0).toLocaleString('en-US', { maximumFractionDigits: 8 });
-      $('#mana').textContent = Number(a.mana || 0).toFixed(2);
-      takeSmart(a.smart);
-    } catch (_) {
-      BALANCE_SATS = '';
-      $('#bal').textContent = '—'; $('#mana').textContent = '—';
+      await account;
+      UI.paintPortfolio(await portfolio);
+    } finally {
+      PAINTING = false;
+      if (PAINT_AGAIN) { PAINT_AGAIN = false; paint(); }
     }
   }
   setInterval(() => { if (!$('#view-wallet').hidden) paint(); }, 30000);
+  /* Coming back to the tab or the app: the 30s tick skipped while hidden. */
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#view-wallet').hidden) paint(); });
 
   $('#addr').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(ADDRESS || ''); $('#addr').style.borderColor = 'var(--good)'; }
+    try { await navigator.clipboard.writeText(ADDRESS || ''); $('#addr').style.borderColor = 'var(--good)'; UI.toast('Address copied'); }
     catch (_) { window.prompt('Copy your address:', ADDRESS || ''); }
     setTimeout(() => { $('#addr').style.borderColor = ''; }, 900);
   });
@@ -257,6 +290,7 @@
     $('#recovery-banner').hidden = !RECOVERY;
     const single = CREDENTIALS.length === 1 && !hasKit;
     $('#backup-nudge').hidden = !single || !ACTIVE;
+    UI.paintProtection(CREDENTIALS, RECOVERY, ACTIVE, true);
   }
 
   const bsay = (m, cls) => { const st = $('#backup-status'); st.hidden = !m; st.className = 'status' + (cls ? ' ' + cls : ''); st.innerHTML = m || ''; };
@@ -465,6 +499,7 @@
        next tap CREATE a second account instead of signing back in. */
     storeAddr(null);
     try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
+    UI.closeSheet(); UI.showTab('tab-home');
     show('#view-landing');
     $('#alt-unlock').hidden = false;
   });

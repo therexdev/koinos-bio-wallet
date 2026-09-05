@@ -152,6 +152,45 @@ min-out; a mid-flow failure leaves funds in a plain ERC-20 the flow retries
 from. The rail runs live only on mainnet (`KOINOS_NETWORK=mainnet` with the
 chain configured) — everywhere else the card simulates.
 
+## The app: one screen, three tabs
+
+The wallet is laid out like a phone wallet and installs as one (manifest,
+icons, a service worker that never caches `/api`). Everything signed-in
+lives inside `#view-wallet`, so the landing and recovery views are unchanged
+and `show()` still hides the lot with one attribute.
+
+| tab | what is on it |
+|---|---|
+| **Home** | total in dollars, a KOIN tile and a VHP tile, your short address (tap to copy), the protection line, Receive · Send · Buy, the token list (KOIN, VHP, any token you add by contract address) and, once funding is on, the "Waiting to convert · Ethereum" rows |
+| **Buy** | the Fund card as three steps — Deposit (QR + address + the custody note), Convert (amount, routes, best marked), Land (progress, the passkey landing button). A green dot on the tab while a job runs; it pulses when a tap is needed |
+| **Security** | a Protection meter and checklist (passkey · backup passkey · recovery kit, each tappable), the Account card (full address, network, explorer, Show QR), Backups (unchanged), the App card (install / offline), the explainer and Sign out |
+
+Four bottom sheets do the rest: **Token** (balance, price, mana for KOIN,
+contract, explorer, Receive / Send), **Send** (To with Paste and Scan,
+Amount with Send all, a live "You will sign" summary with the full grouped
+address, then the passkey button), **Receive** (QR + address + copy/share,
+optional amount), **Add token**. One sheet at a time; Escape, the scrim, the
+handle, the X and Done all close it and hand focus back. The camera overlay
+sits above the sheets so Scan works from inside Send.
+
+Numbers never lie about money: an unknown price is "—" (never $0.00), the
+hero shows the KOIN balance itself when there is no dollar price, a partial
+total says so, stale prices carry a clock, and a failed refresh keeps the
+last good screen with "showing balances from HH:MM". Demo mode tags the hero
+with SAMPLE PRICES and the Buy tab with SIMULATED.
+
+**Deep links** (the home-screen shortcuts): `/?open=receive`, `/?open=send`,
+`/?tab=convert` — applied once the wallet is open, then scrubbed from the URL.
+
+**Id contract.** `app.js` and `fund.js` look elements up by id at boot;
+`tests/dom-ids.test.js` pins every one of them to exactly one element, the
+script order (`webauthn-wire → passkey → recovery → fund → qr → receive →
+portfolio → ui → app`) and the z-order tokens. `public/js/ui.js` owns the
+shell (`UI.showTab`, `openSheet` / `closeSheet`, `toast`, `paintPortfolio`,
+`paintProtection`, `applyIntent`, `setContext`); it never writes
+`#btn-send.disabled` (that stays with `setStep`) and never invents a number
+(`portfolio.js` formats them).
+
 ## Honest mana economics
 
 | action | burns (≈) |

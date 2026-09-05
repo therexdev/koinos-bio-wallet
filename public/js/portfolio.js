@@ -91,6 +91,8 @@ const Portfolio = (() => {
 
   /* ---- the model ---- */
 
+  const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
   /** Shape the server's answer into rows the screen prints. */
   function model(p) {
     const prices = p.prices || {};
@@ -123,6 +125,11 @@ const Portfolio = (() => {
       partialTotal: p.totalUsd != null && !p.allPriced,
       priceStale: !!(prices.koinUsd && prices.koinUsd.stale),
       priceSource: prices.koinUsd && prices.koinUsd.source || null,
+      /* Per-unit numbers the screen derives from (≈ $ on the send sheet,
+         ≈ KOIN for VHP); null means unknown, and unknown prints as nothing. */
+      koinUsd: num(prices.koinUsd && prices.koinUsd.value),
+      vhpKoin: num(prices.vhpKoin && prices.vhpKoin.value),
+      priceAt: num(prices.koinUsd && prices.koinUsd.at),
     };
   }
 

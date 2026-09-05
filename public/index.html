@@ -2,13 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Koinos Bio Wallet</title>
 <meta name="description" content="A real Koinos smart account, sealed by your own biometrics. One scan creates it on-chain, the same scan opens it — no password, no seed phrase, no fees. Built on the Veive protocol.">
 <!-- Installable: add to home screen and it runs full-screen like an app. -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#121212">
 <meta name="color-scheme" content="dark">
+<meta name="format-detection" content="telephone=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -19,12 +20,32 @@
 </head>
 <body>
 
+<!-- Icon sprite: one stroke set, referenced with <use>. Colors come from
+     currentColor so every icon follows its button's state. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><path d="M15 11h5v4h-5a2 2 0 0 1 0-4z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.2c0 4.4-3 8.3-7 9.8-4-1.5-7-5.4-7-9.8V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-receive" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.5-2h5L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><rect x="6" y="5" width="12" height="16" rx="2"/><path d="M9 5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 12h6M9 16h4"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-eth" viewBox="0 0 24 24"><path d="M12 3l6 9.3-6 3.5-6-3.5z"/><path d="M6 13.8l6 8.2 6-8.2-6 3.5z"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h3v3M20 14v2M17 20h3M14 19v1"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+  <symbol id="i-door" viewBox="0 0 24 24"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="M14 8l4 4-4 4M18 12H9"/></symbol>
+  <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6M9.5 11.5L12 14l2.5-2.5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5L20 3M16 7l2.5 2.5M13.5 9.5l2 2"/></symbol>
+  <symbol id="i-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6"/></symbol>
+</svg>
+
 <header class="top">
-  <div class="brand"><span class="mark">🔐</span> Koinos <strong>Bio Wallet</strong></div>
-  <div class="top-right">
-    <span class="badge" id="net-badge">…</span>
-    <button class="linkish" id="btn-signout" hidden>Sign out</button>
-  </div>
+  <div class="brand"><img class="mark" src="/assets/icon.svg" alt="" width="24" height="24"> Koinos <strong>Bio Wallet</strong></div>
+  <span class="badge" id="net-badge">…</span>
 </header>
 
 <main>
@@ -57,7 +78,7 @@
   <section id="view-recover" class="wallet" hidden>
     <div class="card">
       <div class="k">Recover your account</div>
-      <p class="hint" style="margin:6px 0 10px">Paste the contents of your recovery kit file
+      <p class="hint">Paste the contents of your recovery kit file
         (<code>koinos-recovery-kit-….txt</code>). Its key signs you in and can register a brand-new
         passkey — no old passkey needed.</p>
       <textarea id="kit-input" rows="7" spellcheck="false" placeholder="KOINOS BIO WALLET — RECOVERY KIT&#10;…"></textarea>
@@ -67,143 +88,344 @@
     </div>
   </section>
 
-  <!-- ─── Wallet ─── -->
+  <!-- ─── Wallet: three tabs, four sheets, all inside this one section so
+       show() hides everything together ─── -->
   <section id="view-wallet" class="wallet" hidden>
-    <div class="status" id="activation" hidden></div>
-    <div class="status" id="recovery-banner" hidden>Recovery mode — you're signed in with your kit key.
-      Mint a fresh passkey now: <button class="ghost small" id="btn-rekey">Add a new passkey to this device</button></div>
-
-    <div class="card addr-card">
-      <div class="k">Your smart account</div>
-      <button class="addr" id="addr" title="Copy address"></button>
-      <div class="hint">Tap to copy. A real contract account on Koinos — yours on every Koinos app.</div>
+    <div id="notices">
+      <div class="status" id="activation" hidden></div>
+      <div class="status" id="recovery-banner" hidden>Recovery mode — signed in with your kit key.
+        <button class="ghost small" id="btn-rekey" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> Add a passkey to this device</button></div>
     </div>
+    <div class="offline-note" id="offline-note" hidden></div>
 
-    <div class="row">
-      <div class="card stat">
-        <div class="k"><span id="sym">KOIN</span> balance</div>
-        <div class="v" id="bal">…</div>
-      </div>
-      <div class="card stat">
-        <div class="k">Mana</div>
-        <div class="v" id="mana">…</div>
-        <div class="hint">Fees are on us — the sharer pays.</div>
-      </div>
-    </div>
-
-    <div class="row" id="deposit-stats" hidden>
-      <div class="card stat">
-        <div class="k">ETH · deposit address</div>
-        <div class="v" id="stat-eth">…</div>
-      </div>
-      <div class="card stat">
-        <div class="k">USDC / USDT · deposit</div>
-        <div class="v" id="stat-stable">…</div>
-        <div class="hint">Swappable to KOIN below.</div>
-      </div>
-      <div class="card stat" id="stat-bridge-card" hidden>
-        <div class="k">In the bridge</div>
-        <div class="v" id="stat-bridge">…</div>
-        <div class="hint">Left your deposit address, landing as KOIN.</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="k">Send <span id="sym2">KOIN</span> <span class="free-chip">free — mana shared</span></div>
-      <label>To address<input type="text" id="send-to" placeholder="1…" autocomplete="off" spellcheck="false"></label>
-      <button class="cta small ghost field-btn" id="btn-scan" type="button">📷 Scan QR code</button>
-      <label>Amount<input type="text" id="send-amount" inputmode="decimal" placeholder="1.0" autocomplete="off"></label>
-      <button class="cta small ghost field-btn" id="btn-send-all" type="button">Send all</button>
-      <div class="status" id="send-status" hidden></div>
-      <button class="cta small" id="btn-send">Send</button>
-    </div>
-
-    <div class="card">
-      <div class="k">Fund with ETH · USDC · USDT <span class="free-chip">auto-swapped to KOIN</span></div>
-      <div id="fund-setup">
-        <p class="hint" style="margin:6px 0 10px">Get a personal <strong>Ethereum deposit address</strong> for this
-          account. Send it ETH, USDC or USDT from any wallet or exchange, and one tap swaps the whole balance to
-          KOIN through the best of two live routes (Uniswap + the Vortex bridge) — your passkey signs the landing.</p>
-        <button class="ghost" id="btn-fund-enable">Get my Ethereum deposit address</button>
-      </div>
-      <div id="fund-body" hidden>
-        <div class="k" style="margin-top:2px">Your deposit address <span class="fund-net">Ethereum mainnet only</span></div>
-        <button class="addr fund-addr" id="fund-eth-addr" title="Copy Ethereum address"></button>
-        <p class="hint" style="margin:4px 0 8px">Tap to copy. Send ETH, USDC or USDT here — in-transit funds are
-          held by the app's funding key only until they land as KOIN on your smart account, so keep amounts modest.</p>
-        <div class="fund-balances" id="fund-balances"></div>
-        <div id="fund-idle">
-          <div id="fund-assets"></div>
-          <p class="hint" id="fund-empty" style="margin:2px 0 6px">Waiting for a deposit… balances appear here
-            within a minute of confirming on Ethereum.</p>
-        </div>
-        <div class="status" id="fund-job" hidden>
-          <span class="fund-spin" id="fund-spin" hidden></span>
-          <span id="fund-job-label"></span>
-          <div class="hint" id="fund-job-sub" style="margin:4px 0 0"></div>
-          <div class="btn-row">
-            <button class="cta small" id="btn-fund-land" hidden>Land my KOIN — confirm with passkey</button>
-            <button class="ghost" id="btn-fund-retry" hidden>Retry</button>
-            <button class="ghost" id="btn-fund-reset" hidden>New swap</button>
+    <!-- ── Home ── -->
+    <div id="tab-home" class="tab" role="tabpanel" aria-labelledby="tabbtn-home">
+      <section class="hero" id="hero">
+        <div class="eyebrow" id="hero-label">Balance</div>
+        <div class="total num" id="total-usd"><span class="skel skel-hero" aria-hidden="true"></span></div>
+        <div class="hero-note" id="hero-note" hidden></div>
+        <div class="tiles">
+          <div class="tile">
+            <div class="eyebrow"><span id="sym">KOIN</span></div>
+            <div class="tile-v num" id="bal"><span class="skel skel-tile" aria-hidden="true"></span></div>
+            <div class="tile-sub" id="bal-usd">—</div>
+          </div>
+          <div class="tile">
+            <div class="eyebrow">VHP</div>
+            <div class="tile-v num" id="vhp-bal"><span class="skel skel-tile" aria-hidden="true"></span></div>
+            <div class="tile-sub" id="vhp-sub">—</div>
           </div>
         </div>
-        <div class="status" id="fund-status" hidden></div>
+        <div class="hero-meta">
+          <button class="pill mono" id="addr-short" type="button" title="Copy address"><span class="pill-text">…</span><svg class="ic ic-14"><use href="#i-copy"/></svg></button>
+          <button class="linkish protect-line" id="protect-line" type="button"><span class="dot"></span><span class="protect-text">Checking your keys…</span></button>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button class="action" id="btn-open-receive" type="button"><span class="circle"><svg class="ic"><use href="#i-receive"/></svg></span><span>Receive</span></button>
+        <button class="action" id="btn-open-send" type="button"><span class="circle"><svg class="ic"><use href="#i-send"/></svg></span><span>Send</span></button>
+        <button class="action" id="btn-open-buy" type="button"><span class="circle"><svg class="ic"><use href="#i-plus"/></svg></span><span>Buy</span></button>
+      </div>
+
+      <div class="section-head"><span class="eyebrow">Tokens</span><button class="linkish accent" id="btn-add-token" type="button">+ Add token</button></div>
+      <div class="list" id="token-list" role="list">
+        <div class="row skel-row" aria-hidden="true"><span class="skel icon"></span><span class="mid"><span class="skel line w40"></span><span class="skel line w60 thin"></span></span><span class="right"><span class="skel line w20"></span></span></div>
+        <div class="row skel-row" aria-hidden="true"><span class="skel icon"></span><span class="mid"><span class="skel line w30"></span><span class="skel line w50 thin"></span></span><span class="right"><span class="skel line w20"></span></span></div>
+      </div>
+      <p class="hint refresh-note" id="refresh-note" hidden></p>
+
+      <div class="deposit-group" id="deposit-stats" hidden>
+        <div class="section-head"><span class="eyebrow">Waiting to convert · Ethereum</span></div>
+        <p class="hint sub">Held by the app's funding key until it lands as KOIN. Tap a row to convert.</p>
+        <div class="list">
+          <button class="row" id="stat-eth-row" type="button" data-goto="tab-convert">
+            <span class="icon eth"><svg class="ic"><use href="#i-eth"/></svg><span class="net-badge">E</span></span>
+            <span class="mid"><span class="t">ETH</span><span class="s">At your deposit address</span></span>
+            <span class="right"><span class="v num" id="stat-eth">…</span></span>
+          </button>
+          <button class="row" id="stat-stable-row" type="button" data-goto="tab-convert">
+            <span class="icon eth"><span class="sym-text">$</span><span class="net-badge">E</span></span>
+            <span class="mid"><span class="t">USDC / USDT</span><span class="s">At your deposit address</span></span>
+            <span class="right"><span class="v num" id="stat-stable">…</span></span>
+          </button>
+          <button class="row" id="stat-bridge-card" type="button" data-goto="tab-convert" hidden>
+            <span class="icon eth"><span class="fund-spin" aria-hidden="true"></span></span>
+            <span class="mid"><span class="t">Landing as KOIN</span><span class="s">In the Vortex bridge</span></span>
+            <span class="right"><span class="v num" id="stat-bridge">…</span></span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="k">Backups</div>
-      <p class="hint" id="backup-nudge" style="margin:6px 0 8px" hidden>One passkey is one point of failure —
-        if its account (Google / Apple) is ever lost, so is the wallet. Add a second passkey from another
-        device, or download a recovery kit you keep offline.</p>
-      <ul class="cred-list" id="cred-list"></ul>
-      <p class="hint" id="kit-armed" style="margin:4px 0 8px" hidden>✓ A recovery kit is active for this
-        account — the file you saved opens it all by itself.</p>
-      <div class="status" id="backup-status" hidden></div>
-      <div class="btn-row">
-        <button class="ghost" id="btn-add-passkey">Add backup passkey</button>
-        <button class="ghost" id="btn-make-kit">Create recovery kit</button>
+    <!-- ── Buy: the Fund card, id for id ── -->
+    <div id="tab-convert" class="tab" role="tabpanel" aria-labelledby="tabbtn-convert" hidden>
+      <div class="page-head">
+        <h2>Buy KOIN <span class="tag warn" id="buy-sim-chip" hidden>Simulated</span></h2>
+        <p class="sub">Convert ETH, USDC or USDT you already hold — from any wallet or exchange — into KOIN. One passkey tap lands it.</p>
       </div>
-      <div id="backup-box" hidden>
-        <p class="hint" style="margin:10px 0 6px">New passkey captured ✓ — now confirm with your
-          <strong>current</strong> passkey to register it on-chain.</p>
-        <div class="btn-row">
-          <button class="cta small" id="btn-backup-activate">Confirm and activate backup</button>
-          <button class="ghost" id="btn-backup-cancel">Discard</button>
+
+      <div class="card" id="fund-setup">
+        <div class="step-head"><span class="step-n">1</span><span class="k">Deposit</span></div>
+        <p class="hint">You need ETH, USDC or USDT in another wallet or exchange first. This account gets a
+          personal Ethereum deposit address; whatever you send there is converted to KOIN here.</p>
+        <button class="ghost wide" id="btn-fund-enable" type="button">Show my deposit address</button>
+      </div>
+
+      <div id="fund-body" hidden>
+        <div class="card">
+          <div class="step-head"><span class="step-n">1</span><span class="k">Deposit</span><span class="fund-net">Ethereum mainnet only</span></div>
+          <div class="qr-tile small" id="fund-eth-qr"><span class="skel" aria-hidden="true"></span></div>
+          <button class="addr fund-addr" id="fund-eth-addr" type="button" title="Copy Ethereum address"></button>
+          <p class="hint center">Tap the address to copy.</p>
+          <div class="custody-note">Send ETH, USDC or USDT here only. In-transit funds are held by the app's funding
+            key until they land as KOIN on your smart account, so keep amounts modest. Other tokens sent here are lost.</div>
+          <div class="fund-balances" id="fund-balances"></div>
+        </div>
+
+        <div class="card">
+          <div class="step-head"><span class="step-n">2</span><span class="k">Convert</span></div>
+          <div id="fund-idle">
+            <div id="fund-assets"></div>
+            <p class="hint" id="fund-empty">Waiting for a deposit — balances appear here within a minute of confirming on Ethereum.</p>
+          </div>
+          <p class="hint" id="fund-convert-busy" hidden>A conversion is in progress — see step 3.</p>
+        </div>
+
+        <div class="card">
+          <div class="step-head"><span class="step-n">3</span><span class="k">Land</span></div>
+          <p class="hint" id="fund-land-idle">Once a conversion starts, its progress and the landing button appear here.</p>
+          <div class="status" id="fund-job" hidden>
+            <span class="fund-spin" id="fund-spin" hidden></span>
+            <span class="job-label" id="fund-job-label"></span>
+            <div class="hint" id="fund-job-sub"></div>
+            <p class="hint tiny">Your passkey signs the Koinos-side step only. Fee: free.</p>
+            <div class="btn-row">
+              <button class="cta small lock" id="btn-fund-land" type="button" hidden>Land my KOIN — confirm with passkey</button>
+              <button class="ghost" id="btn-fund-retry" type="button" hidden>Retry</button>
+              <button class="ghost" id="btn-fund-reset" type="button" hidden>New swap</button>
+            </div>
+          </div>
         </div>
       </div>
-      <div id="kit-box" hidden>
-        <p class="hint" style="margin:10px 0 6px"><strong>Save this file somewhere safe and offline</strong> —
-          it just downloaded, and it's shown below in case you'd rather copy it by hand. Anyone holding it
-          controls the account. It does nothing until you activate it.</p>
-        <pre class="kit-text" id="kit-text"></pre>
-        <div class="btn-row">
-          <button class="cta small" id="btn-kit-activate">I saved it — activate on-chain</button>
-          <button class="ghost" id="btn-kit-cancel">Discard</button>
-        </div>
-      </div>
+      <div class="status" id="fund-status" hidden></div>
+      <p class="hint center">Quotes are live; the best route is marked.</p>
     </div>
 
-    <div class="card">
-      <div class="k">How this account works</div>
-      <p class="hint" style="margin:6px 0 0">Your account is an on-chain contract (Veive protocol); every key on it —
-        passkeys and the recovery kit alike — is a registered credential the blockchain checks itself. Passkeys sync
-        through iCloud Keychain / Google Password Manager; the recovery kit is your manual, offline fallback. Any one
-        of them signs; losing one loses nothing while another remains.</p>
+    <!-- ── Security ── -->
+    <div id="tab-security" class="tab" role="tabpanel" aria-labelledby="tabbtn-security" hidden>
+      <div class="page-head"><h2>Security</h2></div>
+
+      <div class="card">
+        <div class="meter" id="protect-meter" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h3 class="protect-title" id="protect-title">Checking your keys…</h3>
+        <p class="sub" id="protect-sub">Reading the sign-in methods registered on your account.</p>
+        <div class="checklist">
+          <button class="chk" id="chk-passkey" type="button"><span class="ring"><svg class="ic ic-14"><use href="#i-check"/></svg></span><span>Passkey on this device</span></button>
+          <button class="chk" id="chk-backup" type="button"><span class="ring"><svg class="ic ic-14"><use href="#i-check"/></svg></span><span>Backup passkey on another device</span></button>
+          <button class="chk" id="chk-kit" type="button"><span class="ring"><svg class="ic ic-14"><use href="#i-check"/></svg></span><span>Recovery kit saved offline</span></button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="k">Account</div>
+        <button class="addr" id="acct-addr" type="button" title="Copy address"></button>
+        <dl class="details">
+          <div><dt>Network</dt><dd id="acct-net">…</dd></div>
+          <div><dt>Signed in with</dt><dd id="acct-signed">…</dd></div>
+        </dl>
+        <div class="btn-row two">
+          <button class="ghost" id="btn-show-qr" type="button"><svg class="ic ic-18"><use href="#i-qr"/></svg> Show QR</button>
+          <a class="ghost" id="acct-explorer" href="#" target="_blank" rel="noopener" hidden>Explorer ↗</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="k">Backups</div>
+        <p class="hint callout warn" id="backup-nudge" hidden>One passkey is one point of failure —
+          if its account (Google / Apple) is ever lost, so is the wallet. Add a second passkey from another
+          device, or download a recovery kit you keep offline.</p>
+        <ul class="cred-list" id="cred-list"></ul>
+        <p class="hint callout good" id="kit-armed" hidden>✓ A recovery kit is active for this
+          account — the file you saved opens it all by itself.</p>
+        <div class="status" id="backup-status" hidden></div>
+        <div class="btn-row">
+          <button class="ghost wide" id="btn-add-passkey" type="button"><svg class="ic ic-18"><use href="#i-key"/></svg> Add backup passkey</button>
+          <button class="ghost wide" id="btn-make-kit" type="button"><svg class="ic ic-18"><use href="#i-ring"/></svg> Create recovery kit</button>
+        </div>
+        <div id="backup-box" hidden>
+          <p class="hint">New passkey captured ✓ — now confirm with your
+            <strong>current</strong> passkey to register it on-chain.</p>
+          <div class="btn-row">
+            <button class="cta small lock" id="btn-backup-activate" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> Confirm and activate backup</button>
+            <button class="ghost" id="btn-backup-cancel" type="button">Discard</button>
+          </div>
+        </div>
+        <div id="kit-box" hidden>
+          <p class="hint"><strong>Save this file somewhere safe and offline</strong> —
+            it just downloaded, and it's shown below in case you'd rather copy it by hand. Anyone holding it
+            controls the account. It does nothing until you activate it.</p>
+          <pre class="kit-text" id="kit-text"></pre>
+          <div class="btn-row">
+            <button class="cta small lock" id="btn-kit-activate" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> I saved it — activate on-chain</button>
+            <button class="ghost" id="btn-kit-cancel" type="button">Discard</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="k">App</div>
+        <div id="install-row" hidden>
+          <button class="ghost wide" id="btn-install" type="button" hidden><svg class="ic ic-18"><use href="#i-install"/></svg> Add to Home Screen</button>
+          <p class="hint" id="ios-install-note" hidden>On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>. It opens full-screen like an app.</p>
+          <p class="hint" id="install-generic" hidden>Add this wallet to your home screen from your browser's menu to open it like an app.</p>
+        </div>
+        <p class="hint" id="offline-ready" hidden>✓ Works offline — the app shell is saved on this device. Balances still need a connection.</p>
+      </div>
+
+      <details class="card" id="how-it-works">
+        <summary>How this account works</summary>
+        <p class="hint">Your account is an on-chain contract (Veive protocol); every key on it —
+          passkeys and the recovery kit alike — is a registered credential the blockchain checks itself. Passkeys sync
+          through iCloud Keychain / Google Password Manager; the recovery kit is your manual, offline fallback. Any one
+          of them signs; losing one loses nothing while another remains.</p>
+      </details>
+
+      <div class="card about">
+        <div class="k">Koinos Bio Wallet</div>
+        <p class="hint" id="about-prices">Prices: unavailable</p>
+        <p class="hint">Powered by <a href="https://koinos.io" target="_blank" rel="noopener">Koinos</a> — feeless by design ·
+          <a href="https://usekoinos.com" target="_blank" rel="noopener">Discover Koinos ↗</a></p>
+      </div>
+
+      <button class="linkish signout" id="btn-signout" type="button"><svg class="ic ic-18"><use href="#i-door"/></svg> Sign out of this device</button>
+      <p class="hint center" id="signout-note">Your account stays on-chain. Your passkey opens it again.</p>
+    </div>
+
+    <!-- ── Sheets ── -->
+    <div class="sheet" id="sheet-token" role="dialog" aria-modal="true" aria-labelledby="tok-title" tabindex="-1" hidden>
+      <button class="handle" type="button" aria-label="Close" data-close></button>
+      <button class="x" id="btn-tok-close" type="button" aria-label="Close" data-close><svg class="ic"><use href="#i-x"/></svg></button>
+      <div class="tok-head">
+        <div class="icon koin" id="tok-icon">K</div>
+        <h3 id="tok-title"><span id="tok-sym">KOIN</span> <span class="name" id="tok-name">Koin</span></h3>
+        <div class="big num" id="tok-amount">…</div>
+        <div class="sub" id="tok-usd">—</div>
+        <div class="hint" id="tok-price"></div>
+        <div class="hint" id="tok-mana-row">Mana <span id="mana">…</span> · fees are on us</div>
+      </div>
+      <div class="actions2">
+        <button class="ghost" id="btn-tok-receive" type="button">Receive</button>
+        <button class="cta" id="btn-tok-send" type="button">Send</button>
+      </div>
+      <p class="hint center" id="tok-send-note" hidden>This wallet sends KOIN today — sending other tokens is coming.</p>
+      <dl class="details">
+        <div id="tok-contract-row"><dt>Contract</dt><dd><button class="linkish mono" id="tok-contract" type="button" title="Copy contract address"></button></dd></div>
+        <div><dt>Decimals</dt><dd id="tok-decimals"></dd></div>
+        <div><dt>Network</dt><dd id="tok-network"></dd></div>
+      </dl>
+      <a class="linkish accent block" id="tok-explorer" href="#" target="_blank" rel="noopener" hidden>View on explorer ↗</a>
+      <button class="linkish danger block" id="btn-tok-remove" type="button" hidden>Stop tracking this token</button>
+    </div>
+
+    <div class="sheet" id="sheet-send" role="dialog" aria-modal="true" aria-labelledby="send-title" tabindex="-1" hidden>
+      <button class="handle" type="button" aria-label="Close" data-close></button>
+      <button class="x" id="btn-send-close" type="button" aria-label="Close" data-close><svg class="ic"><use href="#i-x"/></svg></button>
+      <h3 id="send-title">Send <span id="sym2">KOIN</span> <span class="free-chip">fees on us</span></h3>
+      <p class="from">From your account <span class="mono" id="send-from">…</span></p>
+      <div class="field">
+        <label for="send-to">To</label>
+        <div class="field-wrap">
+          <input type="text" id="send-to" class="mono" placeholder="Koinos address 1…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off">
+          <div class="field-tools">
+            <button class="icon-btn" id="btn-paste" type="button" aria-label="Paste" title="Paste" hidden><svg class="ic"><use href="#i-paste"/></svg></button>
+            <button class="icon-btn" id="btn-scan" type="button" aria-label="Scan QR code" title="Scan QR code"><svg class="ic"><use href="#i-camera"/></svg></button>
+          </div>
+        </div>
+        <p class="check" id="send-to-check"></p>
+      </div>
+      <div class="field">
+        <label for="send-amount">Amount</label>
+        <div class="field-wrap amount">
+          <input type="text" id="send-amount" class="num" inputmode="decimal" placeholder="0" autocomplete="off">
+          <div class="field-tools">
+            <span class="suffix" id="send-suffix">KOIN</span>
+            <button class="chip" id="btn-send-all" type="button">Send all</button>
+          </div>
+        </div>
+        <p class="helper"><span id="send-avail">Available —</span> <span id="send-usd"></span></p>
+      </div>
+      <div class="sign-summary" id="sign-summary" hidden>
+        <dl>
+          <div><dt>To</dt><dd class="mono" id="ss-to"></dd></div>
+          <div><dt>Amount</dt><dd id="ss-amount"></dd></div>
+          <div><dt>Fee</dt><dd>Free</dd></div>
+          <div><dt>Signed with</dt><dd id="ss-signer"></dd></div>
+          <div><dt>Network</dt><dd id="ss-network"></dd></div>
+        </dl>
+        <p class="foot">Your passkey signs exactly this and nothing else.</p>
+      </div>
+      <p class="warn-line" id="send-offline" hidden>You are offline — the send will fail until you reconnect.</p>
+      <div class="status" id="send-status" hidden></div>
+      <p class="hint center" id="send-gate" hidden>Sends unlock once your account is live on-chain — usually under a minute.</p>
+      <button class="cta lock" id="btn-send" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> Send · confirm with passkey</button>
+      <button class="ghost wide" id="btn-send-done" type="button" hidden>Done</button>
+    </div>
+
+    <div class="sheet" id="sheet-receive" role="dialog" aria-modal="true" aria-labelledby="recv-title" tabindex="-1" hidden>
+      <button class="handle" type="button" aria-label="Close" data-close></button>
+      <button class="x" id="btn-recv-close" type="button" aria-label="Close" data-close><svg class="ic"><use href="#i-x"/></svg></button>
+      <h3 id="recv-title">Receive <span class="badge" id="recv-net">…</span></h3>
+      <p class="sub">One address for KOIN, VHP and every Koinos token.</p>
+      <div class="qr-tile" id="receive-qr"><span class="skel" aria-hidden="true"></span></div>
+      <button class="addr" id="addr" type="button" title="Copy address"></button>
+      <p class="caption">Tap the address to copy</p>
+      <div class="actions2">
+        <button class="cta" id="btn-recv-copy" type="button"><svg class="ic ic-18"><use href="#i-copy"/></svg> Copy address</button>
+        <button class="ghost" id="btn-recv-share" type="button"><svg class="ic ic-18"><use href="#i-share"/></svg> Share</button>
+      </div>
+      <details class="request" id="recv-request">
+        <summary>Request a specific amount</summary>
+        <div class="field-wrap amount small">
+          <input type="text" id="recv-amount" class="num" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount to request">
+          <div class="field-tools"><span class="suffix" id="recv-suffix">KOIN</span></div>
+        </div>
+        <p class="hint" id="recv-amount-note" hidden></p>
+      </details>
+      <p class="warn-line">Send only KOIN and Koinos tokens here. To add ETH, USDC or USDT use <a href="#" id="recv-to-buy">Buy</a>.</p>
+    </div>
+
+    <div class="sheet" id="sheet-add-token" role="dialog" aria-modal="true" aria-labelledby="add-token-title" tabindex="-1" hidden>
+      <button class="handle" type="button" aria-label="Close" data-close></button>
+      <button class="x" id="btn-add-token-close" type="button" aria-label="Close" data-close><svg class="ic"><use href="#i-x"/></svg></button>
+      <h3 id="add-token-title">Add a token</h3>
+      <div class="field">
+        <label for="add-token-addr">Contract address</label>
+        <input type="text" id="add-token-addr" class="mono" placeholder="1…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off">
+        <p class="check err" id="add-token-err" hidden></p>
+      </div>
+      <button class="cta" id="btn-add-token-go" type="button">Add</button>
+      <p class="hint center">Up to 12 extra tokens. Balances are read from the chain; prices are not available for them.</p>
     </div>
   </section>
 </main>
 
-<footer>
-  <span>Powered by <a href="https://koinos.io" target="_blank" rel="noopener">Koinos</a> — feeless by design</span>
-  <a href="https://usekoinos.com" target="_blank" rel="noopener">Discover Koinos ↗</a>
-</footer>
+<nav id="tabbar" role="tablist" aria-label="Wallet" hidden>
+  <button class="tabbtn" id="tabbtn-home" role="tab" aria-selected="true" aria-controls="tab-home" type="button"><span class="ico"><svg class="ic"><use href="#i-wallet"/></svg></span><span>Home</span></button>
+  <button class="tabbtn" id="tabbtn-convert" role="tab" aria-selected="false" aria-controls="tab-convert" type="button" tabindex="-1"><span class="ico"><svg class="ic"><use href="#i-plus"/></svg><span class="tabdot" id="tabdot-convert" hidden></span></span><span>Buy</span></button>
+  <button class="tabbtn" id="tabbtn-security" role="tab" aria-selected="false" aria-controls="tab-security" type="button" tabindex="-1"><span class="ico"><svg class="ic"><use href="#i-shield"/></svg><span class="tabdot" id="tabdot-security" hidden></span></span><span>Security</span></button>
+</nav>
+<div id="scrim" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/recovery.js"></script>
 <script src="/js/fund.js"></script>
 <script src="/js/qr.js"></script>
+<script src="/js/receive.js"></script>
+<script src="/js/portfolio.js"></script>
+<script src="/js/ui.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>
