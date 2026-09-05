@@ -214,22 +214,40 @@ WebView cannot do WebAuthn), the camera scanner, the service worker, the
 `?open=` shortcuts. An account made on the website opens in the app and vice
 versa — same origin, same passkey.
 
-**Getting an APK.** The `Android app` GitHub Actions workflow builds it: every
-push to `main` that touches `android/` (or a manual run from the Actions tab)
-produces `bio-wallet-<version>.apk` and `.aab` as workflow artifacts. The APK
-sideloads onto any phone; the AAB is what Play Console wants. Locally, with an
+**Getting it on a phone.** Every successful build on `main` refreshes the
+`android-latest` pre-release, so the newest APK is always at
+
+    https://github.com/therexdev/koinos-bio-wallet/releases/download/android-latest/bio-wallet.apk
+
+Open that on the phone, allow installs from the browser when asked, done.
+The `Android app` GitHub Actions workflow builds it: every push to `main`
+that touches `android/` (or a manual run from the Actions tab) produces the
+APK plus the `.aab` Play Console wants, both also attached to the run as an
+artifact (a zip, so on a phone prefer the release link). Locally, with an
 Android SDK: `cd android && gradle assembleRelease`.
 
-**Signing.** With no secrets the build is signed by a throwaway debug key —
-installable, but not for Play and not matching the site's asset links. For a
-real key, make one once and keep it forever (losing it means a new app on
-Play):
+**"App not installed".** Android's one-size message. In practice it means
+one of: a build signed with a *different key* is already installed
+(uninstall Bio Wallet first, then install; see signing below), you opened the
+`.aab` (phones install the `.apk`), the download was cut short, or the phone
+blocked the install (Settings → Apps → Special app access → Install unknown
+apps). `adb install bio-wallet.apk` on a computer prints the exact reason.
+
+**Signing.** With no secrets the build is signed by a *debug* key: installable,
+but not for Play and not matching the site's asset links. CI caches that key
+between runs so newer builds install over older ones, but the cache can be
+evicted, after which phones must uninstall once. For a real key, make one
+once and keep it forever (losing it means a new app identity on every phone
+and on Play):
 
 ```bash
-keytool -genkeypair -v -keystore release.jks -alias biowallet -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 release.jks     # → repository secret ANDROID_KEYSTORE_BASE64
-# plus secrets ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS (biowallet), ANDROID_KEY_PASSWORD
+android/tools/make-keystore.sh        # creates release.jks, prints the secrets and the fingerprint
 ```
+
+It prints the four repository secrets (`ANDROID_KEYSTORE_BASE64`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`);
+the next run signs with the key. Back the file up offline; it never enters
+the repository (`android/.gitignore`).
 
 **Losing the URL bar (Digital Asset Links).** Chrome hides the browser UI only
 when the site vouches for the app: `/.well-known/assetlinks.json` must name

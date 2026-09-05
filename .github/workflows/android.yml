@@ -7,11 +7,18 @@
 #   ANDROID_KEYSTORE_PASSWORD
 #   ANDROID_KEY_ALIAS
 #   ANDROID_KEY_PASSWORD
-# Without them the build is signed with a throwaway debug key: fine for
-# sideloading and testing, not for Play, and the site's assetlinks.json
-# will not match it (so the URL bar shows). The job summary prints the
-# SHA-256 fingerprint of whichever certificate signed the build — that is
-# the value for ANDROID_SHA256_FINGERPRINTS on the server.
+# Without them the build is signed with a debug key: fine for sideloading
+# and testing, not for Play, and the site's assetlinks.json will not match
+# it (so the URL bar shows). That debug key is cached between runs so a
+# newer build still installs over an older one; if the cache is evicted a
+# fresh key appears and phones must uninstall the old build once. The log
+# and the job summary print the SHA-256 fingerprint of whichever
+# certificate signed the build — the value for ANDROID_SHA256_FINGERPRINTS.
+#
+# Every successful build on main also refreshes the "android-latest"
+# pre-release, so the newest APK is always at
+#   https://github.com/<owner>/<repo>/releases/download/android-latest/bio-wallet.apk
+# (a raw .apk a phone can install directly, unlike the zipped artifact).
 name: Android app
 
 on:
@@ -51,6 +58,13 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Keep the debug signing key between builds
+        if: env.HAS_RELEASE_KEY != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
       - name: Release keystore from secrets
         if: env.HAS_RELEASE_KEY == 'true'
         run: |
@@ -70,9 +84,17 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk "out/bio-wallet-${ANDROID_VERSION_NAME}.apk"
           cp android/app/build/outputs/bundle/release/app-release.aab "out/bio-wallet-${ANDROID_VERSION_NAME}.aab"
 
+      - name: Verify the APK signature
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "out/bio-wallet-${ANDROID_VERSION_NAME}.apk" | grep -E 'Verified using|Verifies|SHA-256|WARNING' || true
+          "$APKSIGNER" verify "out/bio-wallet-${ANDROID_VERSION_NAME}.apk"
+
       - name: Signing certificate fingerprint (for assetlinks.json)
         run: |
           FP=$(keytool -printcert -jarfile out/bio-wallet-${ANDROID_VERSION_NAME}.apk | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
+          echo "Signing certificate SHA-256: $FP"
+          echo "ANDROID_SHA256_FINGERPRINTS=$FP"
           KIND=$([ "$HAS_RELEASE_KEY" = "true" ] && echo "release key" || echo "DEBUG key — add the signing secrets for a real build")
           {
             echo "## Bio Wallet Android build ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE})"
@@ -100,7 +122,36 @@ jobs:
           path: out/*
           if-no-files-found: error
 
-      - name: Attach to the release (tags only)
+      # The newest build, as a raw APK at a link that never changes.
+      - name: Refresh the android-latest pre-release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "out/bio-wallet-${ANDROID_VERSION_NAME}.apk" out/bio-wallet.apk
+          git tag -f android-latest
+          git push -f origin android-latest
+          KIND=$([ "$HAS_RELEASE_KEY" = "true" ] && echo "the release key" || echo "a debug key (set the signing secrets for a real one)")
+          printf '%s\n' \
+            "Latest build of the Bio Wallet Android app from main: version ${ANDROID_VERSION_NAME}, signed with ${KIND}." \
+            "" \
+            "**Install:** download bio-wallet.apk on the phone, open it, and allow installs from your browser or file manager when asked." \
+            "" \
+            "**\"App not installed\"?** Usually one of these:" \
+            "- a build signed with a different key is already on the phone: uninstall Bio Wallet, then install again;" \
+            "- you opened the .aab file: that one is for the Play Store, phones install the .apk;" \
+            "- the download was cut short: download it again;" \
+            "- the phone blocked the install: Settings, Apps, Special app access, Install unknown apps." \
+            > "$RUNNER_TEMP/notes.md"
+          if gh release view android-latest >/dev/null 2>&1; then
+            gh release edit android-latest --prerelease --title "Bio Wallet for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create android-latest --prerelease --title "Bio Wallet for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload android-latest out/bio-wallet.apk "out/bio-wallet-${ANDROID_VERSION_NAME}.apk" "out/bio-wallet-${ANDROID_VERSION_NAME}.aab" --clobber
+          echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/android-latest/bio-wallet.apk" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to a versioned release (android-v* tags only)
         if: startsWith(github.ref, 'refs/tags/android-v')
         uses: softprops/action-gh-release@v2
         with:
