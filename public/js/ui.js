@@ -27,6 +27,7 @@ const UI = (() => {
     model: null, modelAt: null, credentials: [], credsLoaded: false,
   };
   let sheetEl = null;         // the open sheet
+  let lockY = 0;              // page scroll offset parked while a sheet is open
   let opener = null;          // the element that opened it — focus goes back there
   let closing = null;         // {el, timer, onEnd} while a close animation runs
   let toastTimer = null;
@@ -34,6 +35,11 @@ const UI = (() => {
   let lastSats = {};          // row id → sats, to flash a row that grew
   let lastQr = null;          // "address|amount" last rendered in the receive sheet
   let tokenOpen = null;       // the row model shown in the token sheet
+
+  /* The loading markup, captured once so the screen can go back to it
+     (a new account on the same device must not inherit the old numbers). */
+  const SKEL = {};
+  for (const id of ['total-usd', 'bal', 'vhp-bal', 'token-list']) { const n = byId(id); if (n) SKEL[id] = n.innerHTML; }
 
   /* ---------------- small helpers ---------------- */
   const el = (tag, cls, text) => {
@@ -45,6 +51,16 @@ const UI = (() => {
   const shortAddr = (a) => (a && a.length > 12 ? a.slice(0, 6) + '…' + a.slice(-4) : a || '');
   const groups = (a) => String(a || '').replace(/(.{4})/g, '$1 ').trim();
   const fmtTime = (t) => { try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+  /* "14:32" only when that was today; otherwise the date too, so an old
+     screen never reads as this afternoon's. */
+  const fmtWhen = (t) => {
+    try {
+      const d = new Date(t), now = new Date();
+      const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      return sameDay ? fmtTime(t) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + fmtTime(t);
+    } catch (_) { return ''; }
+  };
+  const CACHE_MAX_AGE = 24 * 3600 * 1000;
   const relTime = (t) => {
     const s = Math.max(0, Math.round((Date.now() - t) / 1000));
     if (s < 90) return 'a minute ago';
@@ -99,7 +115,30 @@ const UI = (() => {
     if (bar) bar.hidden = !inWallet;
     document.body.classList.toggle('in-wallet', inWallet);
     if (!inWallet) { closeSheet({ immediate: true, restoreFocus: false }); showTab('tab-home'); }
-    else paintInstall();
+    else { paintInstall(); paintOffline(); setTimeout(promptInstall, 2500); }
+  }
+
+  /** Sign-out: forget the account, its numbers and its cached screen. */
+  function reset() {
+    closeSheet({ immediate: true, restoreFocus: false });
+    showTab('tab-home');
+    CTX.address = null; CTX.model = null; CTX.modelAt = null; CTX.credentials = []; CTX.credsLoaded = false; CTX.recovery = null;
+    lastSats = {}; lastQr = null; tokenOpen = null;
+    resetScreen();
+    paintProtection([], null, false, false);
+  }
+
+  /** Back to the loading state: skeletons, dashes, nothing from before. */
+  function resetScreen() {
+    for (const id of Object.keys(SKEL)) { const n = byId(id); if (n) n.innerHTML = SKEL[id]; }
+    const label = byId('hero-label'); if (label) label.textContent = 'Balance';
+    const hn = byId('hero-note'); if (hn) { hn.hidden = true; hn.textContent = ''; }
+    for (const id of ['bal-usd', 'vhp-sub']) { const n = byId(id); if (n) n.textContent = '—'; }
+    const pill = $('#addr-short .pill-text'); if (pill) pill.textContent = CTX.address ? shortAddr(CTX.address) : '…';
+    const avail = byId('send-avail'); if (avail) avail.textContent = 'Available —';
+    const ap = byId('about-prices'); if (ap) ap.textContent = 'Prices: unavailable';
+    const note = byId('refresh-note'); if (note) { note.hidden = true; note.textContent = ''; }
+    const qr = byId('receive-qr'); if (qr) { qr.classList.remove('fail'); qr.innerHTML = '<span class="skel" aria-hidden="true"></span>'; }
   }
 
   /* Deep links from the home-screen shortcuts, applied once the wallet is
@@ -115,17 +154,25 @@ const UI = (() => {
   function openSheet(id, opts = {}) {
     const s = byId(id);
     if (!s) return;
+    const prevSheet = sheetEl, prevOpener = opener;
     if (sheetEl && sheetEl !== s) closeSheet({ immediate: true, restoreFocus: false });
     if (closing && closing.el === s) {           // reopened mid-close
       clearTimeout(closing.timer); s.removeEventListener('transitionend', closing.onEnd); closing = null;
     }
+    /* Token sheet → Send sheet: focus should go back to the token row that
+       started it, not to a button inside the sheet that was just replaced. */
     const active = document.activeElement;
-    opener = opts.opener || (active && active !== document.body && !s.contains(active) ? active : null);
+    const outside = active && active !== document.body && !s.contains(active) && !(prevSheet && prevSheet !== s && prevSheet.contains(active));
+    opener = opts.opener || (outside ? active : (prevSheet && prevSheet !== s ? prevOpener : null));
     sheetEl = s;
     const scrim = byId('scrim');
     s.hidden = false;
     if (scrim) scrim.hidden = false;
-    document.body.classList.add('sheet-open');
+    if (!document.body.classList.contains('sheet-open')) {
+      lockY = window.scrollY || 0;
+      document.body.style.top = -lockY + 'px';
+      document.body.classList.add('sheet-open');
+    }
     s.scrollTop = 0;
     onSheetOpen(id);
     const go = () => { s.classList.add('in'); if (scrim) scrim.classList.add('in'); };
@@ -141,7 +188,11 @@ const UI = (() => {
     const scrim = byId('scrim');
     s.classList.remove('in');
     if (scrim) scrim.classList.remove('in');
-    document.body.classList.remove('sheet-open');
+    if (document.body.classList.contains('sheet-open')) {
+      document.body.classList.remove('sheet-open');
+      document.body.style.top = '';
+      window.scrollTo(0, lockY);
+    }
     const finish = () => {
       s.hidden = true;
       if (scrim && !sheetEl) scrim.hidden = true;
@@ -157,7 +208,9 @@ const UI = (() => {
       closing = { el: s, timer: setTimeout(finish, 300), onEnd };
     }
     onSheetClose(s.id);
-    const back = opener; opener = null;
+    let back = opener; opener = null;
+    /* The 30s repaint rebuilds the token rows; find the row by its id. */
+    if (back && !document.contains(back) && back.dataset && back.dataset.id) back = document.querySelector(`#token-list .row[data-id="${CSS.escape(back.dataset.id)}"]`);
     if (opts.restoreFocus !== false && back && document.contains(back) && !back.hidden && typeof back.focus === 'function') {
       try { back.focus({ preventScroll: true }); } catch (_) {}
     }
@@ -182,6 +235,7 @@ const UI = (() => {
   }
   function onSheetClose(id) {
     if (id === 'sheet-token') tokenOpen = null;
+    if (id === 'sheet-install' && !lsGet(LS_INSTALLED)) snoozeInstall();
   }
 
   /* ---------------- toast ---------------- */
@@ -214,9 +268,10 @@ const UI = (() => {
       /* A new address (or the first): show the last good screen for it
          while the live numbers load, instead of a blank hero. */
       if (CTX.address !== before) {
-        lastSats = {}; CTX.model = null; CTX.modelAt = null; lastQr = null;
+        lastSats = {}; CTX.model = null; CTX.modelAt = null; lastQr = null; tokenOpen = null;
         const cached = restoreLast(CTX.address);
-        if (cached) renderModel(cached.model, cached.at);
+        if (cached) renderModel(cached.model, cached.at, true); else resetScreen();
+        if (sheetEl && sheetEl.id === 'sheet-receive') renderReceiveQr();   // opened by a deep link before the address was known
       }
     }
     if (patch && 'cfg' in patch) {
@@ -268,6 +323,7 @@ const UI = (() => {
       const net = CTX.cfg && CTX.cfg.network;
       if (net && v.model.network && v.model.network !== net) return null;
       if (CTX.cfg && !!v.model.demo !== !!CTX.cfg.demo) return null;
+      if (!(v.at > 0) || Date.now() - v.at > CACHE_MAX_AGE) return null;   // a day old is not "your balance"
       return v;
     } catch (_) { return null; }
   }
@@ -276,10 +332,11 @@ const UI = (() => {
       keeps the last good numbers on screen and says when they are from. */
   function paintPortfolio(m) {
     if (!m) return;
+    paintOffline();
     const note = byId('refresh-note');
     if (m.error) {
       if (CTX.model) {
-        if (note) { note.hidden = false; note.textContent = `Could not refresh — showing balances from ${fmtTime(CTX.modelAt)}`; }
+        if (note) { note.hidden = false; note.textContent = `Could not refresh — showing balances from ${fmtWhen(CTX.modelAt)}`; }
       } else {
         if (note) { note.hidden = false; note.textContent = 'Could not load balances — ' + m.error; }
         renderUnavailable();
@@ -299,22 +356,32 @@ const UI = (() => {
     const bal = byId('bal'); if (bal) bal.textContent = '—';
     const vb = byId('vhp-bal'); if (vb) vb.textContent = '—';
     const hn = byId('hero-note'); if (hn) { hn.hidden = false; hn.textContent = 'Balance unavailable right now'; }
+    for (const id of ['bal-usd', 'vhp-sub']) { const n = byId(id); if (n) n.textContent = '—'; }
+    const avail = byId('send-avail'); if (avail) avail.textContent = 'Available —';
+    const ap = byId('about-prices'); if (ap) ap.textContent = 'Prices: unavailable';
     const list = byId('token-list');
     if (list) { list.textContent = ''; list.appendChild(tokenRow({ id: 'koin', symbol: sym(), name: 'Koin', amountText: '—', usdText: '—', unavailable: true })); }
   }
 
-  function renderModel(m, at) {
+  function renderModel(m, at, fromCache) {
     CTX.model = m; CTX.modelAt = at;
     const koin = m.koin || { id: 'koin', symbol: sym(), name: 'Koin', amountText: '—', usdText: '—', unavailable: true };
     const vhp = m.vhp || { id: 'vhp', symbol: 'VHP', name: 'Virtual Hash Power', amountText: '—', usdText: '—', unavailable: true };
-    const hasUsd = m.totalUsd != null;
+    /* No dollar total without the KOIN balance: a VHP-only sum labelled
+       "Total balance" would be a number that is not the balance. */
+    const hasUsd = m.totalUsd != null && !koin.unavailable;
+    CTX.modelFromCache = !!fromCache;
 
     /* hero label + tags */
     const label = byId('hero-label');
     if (label) {
       label.textContent = hasUsd ? 'Total balance' : 'Balance';
       if (m.demo || m.priceSource === 'sample') label.appendChild(el('span', 'tag warn', 'Sample prices'));
-      else if (m.priceStale && m.priceAt) {
+      if (fromCache) {
+        /* Restored from the last visit while the live numbers load. */
+        const t = el('span', 'tag dim'); t.innerHTML = CLOCK + ' '; t.appendChild(document.createTextNode('from ' + fmtWhen(at)));
+        label.appendChild(t);
+      } else if (m.priceStale && m.priceAt) {
         const t = el('span', 'tag dim'); t.innerHTML = CLOCK + ' '; t.appendChild(document.createTextNode('as of ' + relTime(m.priceAt)));
         label.appendChild(t);
       }
@@ -329,6 +396,7 @@ const UI = (() => {
         total.appendChild(document.createTextNode(' '));
         total.appendChild(el('span', 'unit', koin.symbol || sym()));
       }
+      total.classList.toggle('long', total.textContent.length > 12);   // nine-digit balances shrink, never overflow
     }
     const hn = byId('hero-note');
     if (hn) {
@@ -436,8 +504,11 @@ const UI = (() => {
       if (m.vhpKoin != null) ptext = `1 VHP ≈ ${Portfolio.fmtAmount(String(m.vhpKoin), 4)} ${sym()}` + (r.priceText ? ` · ${r.priceText}` : '');
       else ptext = mainnet ? 'Price unavailable' : 'Not priced on testnet';
     } else ptext = 'No price feed for this token';
+    const sample = !!(m.demo || m.priceSource === 'sample');
+    if (sample && (r.priceText || r.id === 'vhp')) ptext += ' · sample price';
     price.textContent = ptext;
     if (r.priceStale && m.priceAt) { const c = document.createElement('span'); c.innerHTML = ' ' + CLOCK + ' as of ' + relTime(m.priceAt); price.appendChild(c); }
+    else if (CTX.modelFromCache && r.usd != null) { const c = document.createElement('span'); c.innerHTML = ' ' + CLOCK + ' from ' + fmtWhen(CTX.modelAt); price.appendChild(c); }
     byId('tok-mana-row').hidden = r.id !== 'koin';
     const send = byId('btn-tok-send');
     send.disabled = r.id !== 'koin';
@@ -519,7 +590,13 @@ const UI = (() => {
     }
     const n = Number(amt);
     const priced = !!(CTX.model && CTX.model.koinUsd != null && /^\d+(\.\d+)?$/.test(amt) && n > 0);
-    const usd = priced ? Portfolio.fmtUsd(n * CTX.model.koinUsd) : null;
+    let usd = priced ? Portfolio.fmtUsd(n * CTX.model.koinUsd) : null;
+    if (usd) {
+      const m = CTX.model;
+      if (m.demo || m.priceSource === 'sample') usd += ' (sample price)';
+      else if (m.priceStale && m.priceAt) usd += ` (rate as of ${relTime(m.priceAt)})`;
+      else if (CTX.modelFromCache) usd += ` (rate from ${fmtWhen(CTX.modelAt)})`;
+    }
     const su = byId('send-usd'); if (su) su.textContent = usd ? `· ≈ ${usd}` : '';
     if (!to || !amt) { sum.hidden = true; return; }
     sum.hidden = false;
@@ -535,7 +612,7 @@ const UI = (() => {
     const on = byId('offline-note');
     if (on) {
       on.hidden = !off;
-      if (off) on.textContent = CTX.modelAt ? `Offline — showing balances from ${fmtTime(CTX.modelAt)}` : 'Offline — balances will load when you reconnect';
+      if (off) on.textContent = CTX.modelAt ? `Offline — showing balances from ${fmtWhen(CTX.modelAt)}` : 'Offline — balances will load when you reconnect';
     }
   }
 
@@ -561,16 +638,97 @@ const UI = (() => {
   }
   const flash = (node) => { if (!node) return; node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 900); };
 
-  /* ---------------- install / PWA ---------------- */
+  /* ---------------- install / Add to Home Screen ----------------
+     The site is a PWA; this is the part that asks. Opened in a browser
+     (not from the home screen) it pops a sheet: Chrome on Android and
+     desktop hand us a real install prompt, iOS has no API but a three-step
+     recipe, other Android browsers have a menu item. "Not now" is
+     remembered for three days; an installed app never asks again. */
+  const LS_INSTALL_SNOOZE = 'bw_install_snooze';   // ms timestamp: quiet until then
+  const LS_INSTALLED = 'bw_installed';
+  const INSTALL_SNOOZE_MS = 3 * 24 * 3600 * 1000;
+  let installPrompted = false;                     // once per page load
+  let installRetries = 0;
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+
+  function installEnv() {
+    const ua = navigator.userAgent || '';
+    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+    const iOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const android = /Android/i.test(ua);
+    return { standalone, iOS, android, mobile: iOS || android || /Mobi/i.test(ua) };
+  }
+  /** What can be offered here: 'prompt' (native dialog), 'ios' or
+      'android' (instructions), or null (installed, or a desktop browser
+      with nothing to offer). */
+  function installOffer() {
+    const env = installEnv();
+    if (env.standalone || lsGet(LS_INSTALLED)) return null;
+    if (installPrompt) return 'prompt';
+    if (env.iOS) return 'ios';
+    if (env.android) return 'android';
+    return null;
+  }
+  const installSnoozed = () => Number(lsGet(LS_INSTALL_SNOOZE) || 0) > Date.now();
+  const snoozeInstall = () => lsSet(LS_INSTALL_SNOOZE, String(Date.now() + INSTALL_SNOOZE_MS));
+
+  function fillInstallSheet(offer) {
+    const env = installEnv();
+    byId('install-title').textContent = env.mobile ? 'Add Bio Wallet to your Home Screen' : 'Install Bio Wallet as an app';
+    byId('install-sub').textContent = env.mobile
+      ? 'Opens full-screen like an app, works offline, and your fingerprint signs you in with one tap.'
+      : 'Opens in its own window, works offline, and your passkey signs you in with one tap.';
+    byId('install-steps-ios').hidden = offer !== 'ios';
+    byId('install-steps-android').hidden = offer !== 'android';
+    const now = byId('btn-install-now');
+    now.hidden = offer !== 'prompt';
+    if (now.lastChild && now.lastChild.nodeType === 3) now.lastChild.textContent = env.mobile ? ' Add to Home Screen' : ' Install app';
+  }
+
+  /** Pop the sheet up: once per page load, never over another sheet or the
+      camera, never while snoozed, never when installed. */
+  function promptInstall() {
+    if (installPrompted || installSnoozed()) return;
+    const offer = installOffer();
+    if (!offer) return;
+    if (sheetEl || document.querySelector('.qr-overlay')) {
+      if (installRetries++ < 5) setTimeout(promptInstall, 4000);
+      return;
+    }
+    installPrompted = true;
+    fillInstallSheet(offer);
+    openSheet('sheet-install');
+  }
+
+  /** The native dialog where there is one; the recipe sheet otherwise. */
+  async function runInstallPrompt() {
+    if (!installPrompt) { const o = installOffer(); if (o) { fillInstallSheet(o); openSheet('sheet-install'); } return; }
+    const ev = installPrompt;
+    let choice = null;
+    try { ev.prompt(); choice = await ev.userChoice; } catch (_) {}
+    installPrompt = null;
+    if (choice && choice.outcome === 'accepted') {
+      lsSet(LS_INSTALLED, '1');
+      if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
+      toast('Added — open Bio Wallet from your home screen');
+    } else {
+      snoozeInstall();
+      if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
+    }
+    paintInstall();
+  }
+
   function paintInstall() {
     const row = byId('install-row');
     if (!row) return;
-    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
-    const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.MSStream;
-    row.hidden = standalone;
-    byId('btn-install').hidden = !installPrompt;
-    byId('ios-install-note').hidden = !(ios && !installPrompt);
-    byId('install-generic').hidden = !!installPrompt || ios;
+    const env = installEnv();
+    const offer = installOffer();
+    row.hidden = !offer;
+    byId('btn-install').hidden = !offer;
+    byId('ios-install-note').hidden = offer !== 'ios';
+    byId('install-generic').hidden = offer !== 'android';
+    byId('installed-note').hidden = !(env.standalone || lsGet(LS_INSTALLED));
     const ready = byId('offline-ready');
     if (ready) ready.hidden = !(navigator.serviceWorker && navigator.serviceWorker.controller);
   }
@@ -651,10 +809,13 @@ const UI = (() => {
       });
     }
     on('btn-send-done', () => closeSheet());
-    const sendBtn = byId('btn-send'), gate = byId('send-gate');
+    const sendBtn = byId('btn-send'), gate = byId('send-gate'), activation = byId('activation');
     if (sendBtn && gate && window.MutationObserver) {
-      const sync = () => { gate.hidden = !sendBtn.disabled; };
+      /* The button is also disabled for the seconds a normal send takes;
+         the gate text is only right while the activation notice is up. */
+      const sync = () => { gate.hidden = !sendBtn.disabled || !activation || activation.hidden; };
       new MutationObserver(sync).observe(sendBtn, { attributes: true, attributeFilter: ['disabled'] });
+      if (activation) new MutationObserver(sync).observe(activation, { attributes: true, attributeFilter: ['hidden'] });
       sync();
     }
     const st = byId('send-status'), done = byId('btn-send-done');
@@ -681,8 +842,8 @@ const UI = (() => {
       }
       /* Tab stays inside an open sheet (it is a modal dialog). */
       if (e.key === 'Tab' && sheetEl && !document.querySelector('.qr-overlay')) {
-        const items = [...sheetEl.querySelectorAll('button, [href], input, textarea, select, summary, [tabindex]:not([tabindex="-1"])')]
-          .filter((n) => !n.disabled && !n.hidden && n.offsetParent !== null && !n.closest('[hidden]'));
+        const items = [...sheetEl.querySelectorAll('button, a[href], input, textarea, select, summary, [tabindex]:not([tabindex="-1"])')]
+          .filter((n) => n instanceof HTMLElement && !n.disabled && !n.hidden && n.offsetParent !== null && !n.closest('[hidden]'));
         if (!items.length) { e.preventDefault(); sheetEl.focus(); return; }
         const first = items[0], last = items[items.length - 1], cur = document.activeElement;
         if (!sheetEl.contains(cur)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
@@ -704,13 +865,25 @@ const UI = (() => {
     on('chk-backup', () => { const b = byId('btn-add-passkey'); if (b && !b.hidden && !byId('chk-backup').classList.contains('on')) { b.scrollIntoView({ block: 'center' }); b.click(); } });
     on('chk-kit', () => { const b = byId('btn-make-kit'); if (b && !b.hidden && !byId('chk-kit').classList.contains('on')) { b.scrollIntoView({ block: 'center' }); b.click(); } });
     /* install prompt */
-    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; paintInstall(); });
-    window.addEventListener('appinstalled', () => { installPrompt = null; paintInstall(); });
-    on('btn-install', async () => {
-      if (!installPrompt) return;
-      try { installPrompt.prompt(); await installPrompt.userChoice; } catch (_) {}
-      installPrompt = null; paintInstall();
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      installPrompt = e;
+      paintInstall();
+      /* Chrome fires this a moment after load: upgrade an open recipe sheet
+         to the real button, or open the sheet now if it was not yet shown. */
+      if (sheetEl && sheetEl.id === 'sheet-install') fillInstallSheet('prompt');
+      else promptInstall();
     });
+    window.addEventListener('appinstalled', () => {
+      installPrompt = null; lsSet(LS_INSTALLED, '1');
+      if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
+      toast('Added — open Bio Wallet from your home screen');
+      paintInstall();
+    });
+    on('btn-install', runInstallPrompt);
+    on('btn-install-now', runInstallPrompt);
+    on('btn-install-later', () => { snoozeInstall(); closeSheet(); });
+    setTimeout(promptInstall, 1500);
     if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', paintInstall);
     /* offline */
     window.addEventListener('online', () => { paintOffline(); if (CTX.refresh) CTX.refresh(); });
@@ -723,7 +896,7 @@ const UI = (() => {
   init();
 
   return {
-    showTab, openSheet, closeSheet, toast, onView, applyIntent, setContext,
+    showTab, openSheet, closeSheet, toast, onView, applyIntent, setContext, reset, promptInstall, installOffer,
     paintPortfolio, paintProtection, renderSendSummary, decorateAddr, openToken,
     currentTab: () => currentTab, openSheetId: () => (sheetEl ? sheetEl.id : null),
   };

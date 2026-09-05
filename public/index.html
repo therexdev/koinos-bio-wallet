@@ -40,6 +40,9 @@
   <symbol id="i-door" viewBox="0 0 24 24"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="M14 8l4 4-4 4M18 12H9"/></symbol>
   <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6M9.5 11.5L12 14l2.5-2.5"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5L20 3M16 7l2.5 2.5M13.5 9.5l2 2"/></symbol>
+  <symbol id="i-ios-share" viewBox="0 0 24 24"><path d="M12 3v11"/><path d="M8.5 6.5L12 3l3.5 3.5"/><path d="M6 10H5a1 1 0 0 0-1 1v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a1 1 0 0 0-1-1h-1"/></symbol>
+  <symbol id="i-plus-square" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8.5v7M8.5 12h7"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></symbol>
   <symbol id="i-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6"/></symbol>
 </svg>
 
@@ -280,6 +283,7 @@
           <p class="hint" id="ios-install-note" hidden>On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>. It opens full-screen like an app.</p>
           <p class="hint" id="install-generic" hidden>Add this wallet to your home screen from your browser's menu to open it like an app.</p>
         </div>
+        <p class="hint" id="installed-note" hidden>✓ Installed — you are using the home-screen app.</p>
         <p class="hint" id="offline-ready" hidden>✓ Works offline — the app shell is saved on this device. Balances still need a connection.</p>
       </div>
 
@@ -409,6 +413,31 @@
     </div>
   </section>
 </main>
+
+<!-- Add to Home Screen. Outside #view-wallet on purpose: it pops up on the
+     landing page too, so the account can be created inside the installed app. -->
+<div class="sheet install" id="sheet-install" role="dialog" aria-modal="true" aria-labelledby="install-title" tabindex="-1" hidden>
+  <button class="handle" type="button" aria-label="Close" data-close></button>
+  <button class="x" id="btn-install-close" type="button" aria-label="Close" data-close><svg class="ic"><use href="#i-x"/></svg></button>
+  <div class="install-head">
+    <img class="install-icon" src="/assets/icon-192.png" alt="" width="72" height="72">
+    <h3 id="install-title">Add Bio Wallet to your Home Screen</h3>
+    <p class="sub" id="install-sub">Opens full-screen like an app, works offline, and your fingerprint signs you in with one tap.</p>
+  </div>
+  <ol class="install-steps" id="install-steps-ios" hidden>
+    <li><span class="n">1</span><span>Tap <strong>Share</strong> <span class="kbd"><svg class="ic ic-18"><use href="#i-ios-share"/></svg></span> in the browser bar</span></li>
+    <li><span class="n">2</span><span>Scroll down and tap <strong>Add to Home Screen</strong> <span class="kbd"><svg class="ic ic-18"><use href="#i-plus-square"/></svg></span></span></li>
+    <li><span class="n">3</span><span>Tap <strong>Add</strong> — then open <strong>Bio Wallet</strong> from your home screen</span></li>
+  </ol>
+  <ol class="install-steps" id="install-steps-android" hidden>
+    <li><span class="n">1</span><span>Open the browser menu <span class="kbd"><svg class="ic ic-18"><use href="#i-menu"/></svg></span></span></li>
+    <li><span class="n">2</span><span>Tap <strong>Add to Home screen</strong> or <strong>Install app</strong></span></li>
+    <li><span class="n">3</span><span>Open <strong>Bio Wallet</strong> from your home screen</span></li>
+  </ol>
+  <button class="cta" id="btn-install-now" type="button" hidden><svg class="ic ic-18"><use href="#i-install"/></svg> Add to Home Screen</button>
+  <button class="ghost wide" id="btn-install-later" type="button">Not now</button>
+  <p class="hint center">Nothing changes on-chain. Your passkey opens the same account either way.</p>
+</div>
 
 <nav id="tabbar" role="tablist" aria-label="Wallet" hidden>
   <button class="tabbtn" id="tabbtn-home" role="tab" aria-selected="true" aria-controls="tab-home" type="button"><span class="ico"><svg class="ic"><use href="#i-wallet"/></svg></span><span>Home</span></button>

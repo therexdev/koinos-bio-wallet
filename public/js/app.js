@@ -230,31 +230,40 @@
      for what the home screen shows (every balance, priced). The screen is
      painted by UI from the portfolio model; a failed read keeps the last
      good numbers rather than blanking them. */
-  let PAINTING = false, PAINT_AGAIN = false;
+  let PAINTING = false, PAINT_AGAIN = false, PAINT_GEN = 0;
   async function paint() {
-    if (!ADDRESS || document.hidden) return;
+    if (!ADDRESS) return;
+    $('#addr').textContent = ADDRESS;
+    UI.setContext({ address: ADDRESS, cfg, recovery: RECOVERY, active: ACTIVE, refresh: paint });
+    if (document.hidden) return;
     /* A request that lands mid-poll (a send just confirmed, KOIN just
        landed) is not dropped: it runs once more as soon as this one ends. */
     if (PAINTING) { PAINT_AGAIN = true; return; }
     PAINTING = true;
-    $('#addr').textContent = ADDRESS;
-    UI.setContext({ address: ADDRESS, cfg, recovery: RECOVERY, active: ACTIVE, refresh: paint });
+    /* Answers belong to the account that asked. Sign-out bumps the
+       generation, so a slow reply for the previous account never paints —
+       or installs its credentials — into the next one's session. */
+    const gen = ++PAINT_GEN;
     const credParam = RECOVERY ? RECOVERY.credentialId : (Passkey.storedId() || '');
     const account = api('/api/account?address=' + encodeURIComponent(ADDRESS)
       + '&credentialId=' + encodeURIComponent(credParam))
       .then((a) => {
+        if (gen !== PAINT_GEN) return;
         BALANCE_SATS = String(a.koinSats == null ? '' : a.koinSats);
         $('#mana').textContent = Number(a.mana || 0).toFixed(2);
         takeSmart(a.smart);
       })
-      .catch(() => { BALANCE_SATS = ''; $('#mana').textContent = '—'; });
+      .catch(() => { if (gen === PAINT_GEN) { BALANCE_SATS = ''; $('#mana').textContent = '—'; } });
     const portfolio = Portfolio.load(ADDRESS, api);   // resolves with {error} rather than rejecting
     try {
       await account;
-      UI.paintPortfolio(await portfolio);
+      const m = await portfolio;
+      if (gen === PAINT_GEN) UI.paintPortfolio(m);
     } finally {
-      PAINTING = false;
-      if (PAINT_AGAIN) { PAINT_AGAIN = false; paint(); }
+      if (gen === PAINT_GEN) {
+        PAINTING = false;
+        if (PAINT_AGAIN) { PAINT_AGAIN = false; paint(); }
+      }
     }
   }
   setInterval(() => { if (!$('#view-wallet').hidden) paint(); }, 30000);
@@ -455,7 +464,7 @@
       /* A payment QR can carry the amount too; taking it saves retyping a
          number that was already in the code. */
       if (hit.amount) $('#send-amount').value = hit.amount;
-      say('Scanned ✓ ' + hit.address + (hit.amount ? ` · ${hit.amount} KOIN` : ''), 'ok');
+      say('Scanned ✓ ' + hit.address + (hit.amount ? ` · ${hit.amount} ${cfg.nativeSymbol || 'KOIN'}` : ''), 'ok');
       ($('#send-amount').value ? $('#btn-send') : $('#send-amount')).focus();
     } catch (e) {
       say(e.message || 'Could not open the camera', 'err');
@@ -493,13 +502,15 @@
   $('#btn-signout').addEventListener('click', () => {
     if (!confirm('Sign out?\n\nYour passkey (or recovery kit) re-opens this account — nothing is lost.')) return;
     stopPoll();
+    PAINT_GEN++; PAINTING = false; PAINT_AGAIN = false;   // in-flight reads for this account are void
+    BALANCE_SATS = '';
     ADDRESS = null; ACTIVE = false; RECOVERY = null; CREDENTIALS = []; PENDING_KIT = null; PENDING_BACKUP = null;
     /* The credential id stays remembered: it's public on-chain anyway, the
        biometric still gates every ceremony, and forgetting it would make the
        next tap CREATE a second account instead of signing back in. */
     storeAddr(null);
     try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
-    UI.closeSheet(); UI.showTab('tab-home');
+    UI.reset(); Fund.forget();
     show('#view-landing');
     $('#alt-unlock').hidden = false;
   });

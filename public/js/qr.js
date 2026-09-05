@@ -111,10 +111,11 @@ const QR = (() => {
 
   /* ---------------- the scanner overlay ---------------- */
 
-  let overlay = null, stream = null, raf = null, cancelled = false;
+  let overlay = null, stream = null, raf = null, cancelled = false, onKey = null;
 
   function teardown() {
     cancelled = true;
+    if (onKey) { document.removeEventListener('keydown', onKey); onKey = null; }
     if (raf) { cancelAnimationFrame(raf); raf = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     if (overlay) { overlay.remove(); overlay = null; }
@@ -155,8 +156,10 @@ const QR = (() => {
 
       overlay.querySelector('.qr-cancel').addEventListener('click', () => finish(null));
       overlay.addEventListener('click', (ev) => { if (ev.target === overlay) finish(null); });
-      const onKey = (ev) => { if (ev.key === 'Escape') finish(null); };
-      document.addEventListener('keydown', onKey, { once: true });
+      /* Not {once}: any other key would consume a once-listener and leave
+         Escape dead while the camera is still up. teardown() removes it. */
+      onKey = (ev) => { if (ev.key === 'Escape') finish(null); };
+      document.addEventListener('keydown', onKey);
 
       (async () => {
         try {

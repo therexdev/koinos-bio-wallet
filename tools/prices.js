@@ -151,8 +151,15 @@ function createPrices(cfg) {
   });
   const vhpKoin = () => cached('vhpKoin', vhpKoinOnChain);
 
-  /** Everything the wallet screen needs, in one read. */
+  /** Everything the wallet screen needs, in one read. Off mainnet the
+      Koinos-side legs are null: tKOIN is not KOIN, and pricing it at the
+      mainnet rate would put dollar totals on a testnet. ETH/USD stays — it
+      is an Ethereum price either way. */
+  const NONE = { value: null, source: null, at: null, stale: false };
   async function snapshot() {
+    if (network !== 'mainnet') {
+      return { koinUsd: { ...NONE, source: 'testnet' }, ethUsd: await ethUsd(), vhpKoin: NONE, vhpUsd: NONE };
+    }
     const [k, e, v] = await Promise.all([koinUsd(), ethUsd(), vhpKoin()]);
     const vhpUsd = k.value != null && v.value != null
       ? { value: k.value * v.value, source: `${v.source} × ${k.source}`, at: Math.min(k.at, v.at), stale: k.stale || v.stale }

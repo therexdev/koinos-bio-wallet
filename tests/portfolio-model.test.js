@@ -47,6 +47,9 @@ const plain = (o) => JSON.parse(JSON.stringify(o));
     assert.strictEqual(P.fmtAmount('1234567.891', 4), '1,234,567.891');
     assert.strictEqual(P.fmtAmount('0', 4), '0');
     assert.strictEqual(P.fmtAmount('0.00000001', 4), '<0.0001', 'dust shows as less-than, not as nothing');
+    assert.strictEqual(P.fmtAmount('1.99995', 4), '1.9999', 'cut, never rounded up: the screen never claims more than is there');
+    assert.strictEqual(P.fmtAmount('124.19999999', 4), '124.1999');
+    assert.strictEqual(P.fmtAmount('0.00019', 4), '0.0001');
     assert.strictEqual(P.fmtAmount(null), '—');
     console.log('✓ display amounts keep dust visible and nulls as a dash');
   }

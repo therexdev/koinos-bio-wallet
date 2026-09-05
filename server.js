@@ -278,7 +278,7 @@ api.account = async (params) => {
   const address = params.get('address');
   if (!chain.isAddr(address)) throw httpError(400, 'a valid Koinos address is required');
   const smart = veive.status(params.get('credentialId')) || undefined;
-  if (DEMO) return { ok: true, demo: true, koin: 0, koinSats: '0', mana: 5, smart };
+  if (DEMO) return { ok: true, demo: true, koin: 124.19, koinSats: '12419000000', mana: 5, smart };   // same sample as /api/portfolio
   const [koin, koinSats, mana] = await Promise.all([
     chain.koinBalance(address).catch(() => 0),
     /* The exact integer too: "Send all" has to name the whole balance to the

@@ -67,7 +67,11 @@ const IDS = {
   'ui.js (security)': [
     'protect-meter', 'protect-title', 'protect-sub', 'chk-passkey', 'chk-backup', 'chk-kit', 'acct-addr',
     'acct-net', 'acct-explorer', 'acct-signed', 'btn-show-qr', 'install-row', 'btn-install',
-    'ios-install-note', 'install-generic', 'offline-ready', 'how-it-works', 'about-prices', 'signout-note',
+    'ios-install-note', 'install-generic', 'installed-note', 'offline-ready', 'how-it-works', 'about-prices', 'signout-note',
+  ],
+  'ui.js (install sheet)': [
+    'sheet-install', 'btn-install-close', 'install-title', 'install-sub', 'install-steps-ios', 'install-steps-android',
+    'btn-install-now', 'btn-install-later',
   ],
 };
 

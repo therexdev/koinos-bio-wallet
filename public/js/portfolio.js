@@ -57,7 +57,9 @@ const Portfolio = (() => {
   }
 
   /** A balance for display: thousands separators, up to `dp` decimals,
-      but a tiny non-zero balance never collapses to "0". */
+      but a tiny non-zero balance never collapses to "0" — and the decimals
+      are cut, not rounded: a screen must never claim more than is there
+      (1.99995 shown as "2" is a send that fails). */
   function fmtAmount(amountStr, dp = 4) {
     if (amountStr == null) return '—';
     const n = Number(amountStr);
@@ -66,7 +68,11 @@ const Portfolio = (() => {
     /* The threshold is built as a string: 10**-4 is not exactly 0.0001 in
        floating point, and "<0.00009999999999999999" is not a balance. */
     if (n > 0 && n < Math.pow(10, -dp)) return '<0.' + '0'.repeat(dp - 1) + '1';
-    return n.toLocaleString('en-US', { maximumFractionDigits: dp });
+    const str = String(amountStr);
+    if (!/^-?\d+(\.\d+)?$/.test(str)) return n.toLocaleString('en-US', { maximumFractionDigits: dp });
+    const [whole, frac = ''] = str.replace('-', '').split('.');
+    const cut = frac.slice(0, dp).replace(/0+$/, '');
+    return (n < 0 ? '-' : '') + Number(whole).toLocaleString('en-US') + (cut ? '.' + cut : '');
   }
 
   /** Dollars. Null → "—". Small values keep enough decimals to mean
@@ -114,22 +120,29 @@ const Portfolio = (() => {
     const koin = rows.find(r => r.id === 'koin') || null;
     const vhp = rows.find(r => r.id === 'vhp') || null;
     const others = rows.filter(r => r.id !== 'koin' && r.id !== 'vhp');
+    /* Staleness is per leg (KOIN/USD from Uniswap, VHP/KOIN from KoinDX);
+       the screen's one clock reports the oldest stale leg. */
+    const legs = [prices.koinUsd, prices.vhpUsd].filter((l) => l && l.value != null);
+    const staleLegs = legs.filter((l) => l.stale);
     return {
       demo: !!p.demo, network: p.network, address: p.address, mana: Number(p.mana || 0),
       koin, vhp, others, rows,
       totalUsd: p.totalUsd == null ? null : Number(p.totalUsd),
       totalUsdText: fmtUsd(p.totalUsd),
       allPriced: !!p.allPriced,
-      /* Something is priced but not everything: say so instead of showing a
-         total that quietly leaves tokens out. */
-      partialTotal: p.totalUsd != null && !p.allPriced,
-      priceStale: !!(prices.koinUsd && prices.koinUsd.stale),
+      /* Something is priced but not everything (or a balance could not be
+         read): say so instead of a total that quietly leaves tokens out. */
+      partialTotal: p.totalUsd != null && (!p.allPriced || rows.some((r) => r.unavailable)),
+      priceStale: staleLegs.length > 0,
       priceSource: prices.koinUsd && prices.koinUsd.source || null,
       /* Per-unit numbers the screen derives from (≈ $ on the send sheet,
          ≈ KOIN for VHP); null means unknown, and unknown prints as nothing. */
       koinUsd: num(prices.koinUsd && prices.koinUsd.value),
       vhpKoin: num(prices.vhpKoin && prices.vhpKoin.value),
-      priceAt: num(prices.koinUsd && prices.koinUsd.at),
+      priceAt: staleLegs.length
+        ? Math.min(...staleLegs.map((l) => num(l.at)).filter((t) => t != null).concat([Infinity])) === Infinity ? null
+          : Math.min(...staleLegs.map((l) => num(l.at)).filter((t) => t != null))
+        : num(prices.koinUsd && prices.koinUsd.at),
     };
   }
 

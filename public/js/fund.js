@@ -9,6 +9,7 @@
 const Fund = (() => {
   let CTX = null;   // { api, signPrepared, credentialId(), onKoinMoved }
   let TIMER = null;
+  let GEN = 0;                // bumped by stop(): an in-flight refresh older than it is void
   let LAST = null;
   let BUSY = false;
   let QR_SHOWN = null;        // the deposit address the QR tile currently shows
@@ -16,7 +17,12 @@ const Fund = (() => {
   const DEBOUNCE = {};
 
   const $ = (s) => document.querySelector(s);
-  const koin = (sats) => (Number(BigInt(sats)) / 1e8).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  /* Exact from the integer, truncated to 4 places — never a rounded-up
+     figure stated as what landed. (Portfolio loads after this file, so it
+     is resolved at call time.) */
+  const koin = (sats) => (typeof Portfolio !== 'undefined'
+    ? Portfolio.fmtAmount(Portfolio.fromSats(String(sats), 8), 4)
+    : (Number(BigInt(sats)) / 1e8).toLocaleString('en-US', { maximumFractionDigits: 4 }));
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const STEP_LABEL = {
@@ -73,15 +79,37 @@ const Fund = (() => {
     });
     refresh();
   }
-  function stop() { if (TIMER) { clearTimeout(TIMER); TIMER = null; } }
+  /* stop() also voids a refresh that is mid-request: without that, the
+     answer would render and re-arm the poll after the wallet was left. */
+  function stop() { GEN++; if (TIMER) { clearTimeout(TIMER); TIMER = null; } }
+  /* Sign-out: nothing of the previous account survives into the next —
+     neither the state nor what render() wrote on screen. */
+  function forget() {
+    stop(); LAST = null; LAST_JOB_STATUS = null; QR_SHOWN = null;
+    $('#fund-setup').hidden = false; $('#fund-body').hidden = true;
+    $('#fund-eth-addr').textContent = ''; $('#fund-balances').innerHTML = ''; $('#fund-assets').innerHTML = '';
+    $('#fund-job').hidden = true; $('#fund-job-label').textContent = ''; $('#fund-job-sub').textContent = '';
+    say('');
+    opt('#fund-eth-qr', (n) => { n.classList.remove('fail'); n.innerHTML = '<span class="skel" aria-hidden="true"></span>'; });
+    opt('#deposit-stats', (n) => { n.hidden = true; });
+    opt('#stat-bridge-card', (n) => { n.hidden = true; });
+    opt('#tabdot-convert', (n) => { n.hidden = true; n.classList.remove('pulse'); });
+    opt('#fund-land-idle', (n) => { n.hidden = false; });
+    opt('#fund-convert-busy', (n) => { n.hidden = true; });
+  }
 
   async function refresh() {
     stop();
+    const g = GEN;
     if (!CTX || !CTX.credentialId()) return;
+    let st = null;
     try {
-      LAST = await CTX.api('/api/fund/status?credentialId=' + encodeURIComponent(CTX.credentialId()));
+      st = await CTX.api('/api/fund/status?credentialId=' + encodeURIComponent(CTX.credentialId()));
+      if (g !== GEN) return;
+      LAST = st;
       render(LAST);
     } catch (e) {
+      if (g !== GEN) return;
       /* Never fail silently — a dead-looking button is worse than a reason. */
       if (e.status !== 404) say(e.message || 'Funding is unavailable right now', 'err');
     }
@@ -330,9 +358,10 @@ const Fund = (() => {
         : 'Land my KOIN — confirm with passkey';
       $('#btn-fund-retry').hidden = j.status !== 'error';
       $('#btn-fund-reset').hidden = !['done', 'error'].includes(j.status);
+      opt('#fund-job .btn-row', (n) => { n.hidden = !(tap || ['done', 'error'].includes(j.status)); });
       $('#fund-job').className = 'status' + (j.status === 'done' ? ' ok' : j.status === 'error' ? ' err' : '');
     }
   }
 
-  return { mount, refresh, stop };
+  return { mount, refresh, stop, forget };
 })();

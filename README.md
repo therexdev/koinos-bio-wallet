@@ -191,6 +191,18 @@ shell (`UI.showTab`, `openSheet` / `closeSheet`, `toast`, `paintPortfolio`,
 `#btn-send.disabled` (that stays with `setStep`) and never invents a number
 (`portfolio.js` formats them).
 
+**Add to Home Screen.** The wallet is a PWA (manifest, icons, a service
+worker that keeps the shell available offline and never caches `/api`). Opened
+in a browser rather than from the home screen, it pops up an install sheet:
+Chrome on Android and desktop get a real *Add to Home Screen* button that
+triggers the native install dialog (`beforeinstallprompt`), iOS Safari (which
+has no install API) gets the three-step Share → Add to Home Screen recipe, and
+other Android browsers get the menu recipe. "Not now" is remembered for three
+days (`bw_install_snooze`); an installed app never asks again
+(`bw_installed`, or `display-mode: standalone`). The same button lives in
+Security → App. It pops up on the landing page on purpose: an account created
+inside the installed app has its passkey there from day one.
+
 ## Honest mana economics
 
 | action | burns (≈) |
