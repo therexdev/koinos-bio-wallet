@@ -6,40 +6,44 @@ plugins { id 'com.android.application' }
    the debug certificate, so the URL bar stays until the real key is used. */
 def keystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
 def hasReleaseKey = keystorePath != null && new File(keystorePath).exists()
+/* Computed up front: in the Groovy DSL `versionCode (expr).toInteger()`
+   parses as `(versionCode(expr)).toInteger()`, which is null. */
+def envVersionCode = (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
+def envVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0'
 
 android {
-  namespace 'com.usekoinos.biowallet'
-  compileSdk 34
+  namespace = 'com.usekoinos.biowallet'
+  compileSdk = 34
 
   defaultConfig {
-    applicationId 'com.usekoinos.biowallet'
-    minSdk 23                 // Android 6+; the TWA itself needs Chrome 72+
-    targetSdk 34
-    versionCode (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
-    versionName (System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0')
+    applicationId = 'com.usekoinos.biowallet'
+    minSdk = 23                 // Android 6+; the TWA itself needs Chrome 72+
+    targetSdk = 34
+    versionCode = envVersionCode
+    versionName = envVersionName
   }
 
   signingConfigs {
     if (hasReleaseKey) {
       release {
-        storeFile file(keystorePath)
-        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
-        keyAlias System.getenv('ANDROID_KEY_ALIAS')
-        keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+        storeFile = file(keystorePath)
+        storePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+        keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
       }
     }
   }
 
   buildTypes {
     release {
-      minifyEnabled false
-      signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+      minifyEnabled = false
+      signingConfig = hasReleaseKey ? signingConfigs.release : signingConfigs.debug
     }
   }
 
   compileOptions {
-    sourceCompatibility JavaVersion.VERSION_17
-    targetCompatibility JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
 }
 
