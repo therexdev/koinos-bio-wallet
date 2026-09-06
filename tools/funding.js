@@ -937,19 +937,63 @@ function liveProbeS(t, j) {
 }
 const reconcile = (account, j) => (isSolPhase(j) ? reconcileSol(account, j) : reconcileRouteC(account, j));
 
+/* Steps that ask the chain whether the work is already done before they do
+   it. Re-entering one of these can waste gas but can never do it twice, so
+   Retry may clear a transaction still in the mempool for them. Anything not
+   on this list is assumed to be a real spend. */
+const IDEMPOTENT_STEPS = new Set(["wh_redeem", "awaiting_redeem", "bridge_token"]);
+
 async function resume(account) {
   const j = job(account);
-  if (!j || j.status !== "error" || !j.failedAt) throw new Error("Nothing to resume");
-  let back = { status: j.failedAt === "awaiting_redeem" ? "awaiting_signatures" : j.failedAt };
+  /* Retry is for a job that has failed OR one that has stopped moving. The
+     second case is the one that matters: a step looping on a transient
+     error, or waiting on a transaction that will never be mined, never
+     reaches "error" — and refusing to resume it was how a conversion sat in
+     the bridge with a Retry button that answered "Nothing to resume". */
+  const stalled = j ? stallOf(j) : null;
+  if (!j || (j.status !== "error" && !stalled)) throw new Error("Nothing to resume");
+  const from = j.status === "error" ? j.failedAt : j.status;
+  if (!from) throw new Error("Nothing to resume");
+
+  /* A failed job's transaction is finished with. A STALLED one's may still
+     be alive, and re-running a step whose spend is in flight would send it
+     twice — so ask the chain before dropping it. */
+  let keepPending = false;
+  if (j.status !== "error" && j.pendingTx && !S.demo) {
+    try {
+      const p = await ethProvider();
+      const [rcpt, tx] = await Promise.all([
+        p.getTransactionReceipt(j.pendingTx),
+        p.getTransaction(j.pendingTx),
+      ]);
+      /* Mined after all: leave it alone, the next tick reads the receipt. */
+      if (rcpt) keepPending = true;
+      /* Still in the mempool. Only a step that checks the chain before it
+         spends may be re-entered around it. */
+      else if (tx && !IDEMPOTENT_STEPS.has(from)) {
+        throw new Error(`That transaction is still waiting to be mined (${String(j.pendingTx).slice(0, 10)}…). Re-sending this step now could spend twice, so it has to be left alone until the network takes it or drops it.`);
+      }
+      /* Neither: dropped from the mempool, and safe to send again. */
+    } catch (e) {
+      /* The refusal above is a decision, not a read failure — let it out. */
+      if (/still waiting to be mined/.test(String(e.message))) throw e;
+      /* A read failure is not permission to re-send a live transaction. */
+      keepPending = true;
+    }
+  }
+
+  let back = { status: from === "awaiting_redeem" ? "awaiting_signatures" : from };
   if (!S.demo) {
     try { back = (await reconcile(account, j)) || back; }
     catch (_) { /* can't read the chain right now — retry from the record */ }
   }
-  /* Retry starts its leg clean: no pending transaction on either chain (a
-     Solana send that is at "error" has failed or lapsed — every step
-     re-reads the chain before sending), and the counters back to zero. */
+  /* Retry starts its leg clean: the counters back to zero, and the pending
+     transaction dropped unless the checks above found it alive. */
   saveJob(account, {
-    ...j, ...back, error: null, failedAt: null, pendingTx: null, pendingSig: null, pendingSigExpiry: null,
+    ...j, ...back, error: null, failedAt: null,
+    ...(keepPending ? {} : { pendingTx: null }),
+    pendingSig: null, pendingSigExpiry: null,
+    lastError: undefined, transientCount: undefined,
     redeemAttempts: 0, resends: 0, gasFronts: 0, sigStartedAt: Date.now(), vaaStartedAt: Date.now(),
   });
   return publicJob(job(account));

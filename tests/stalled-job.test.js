@@ -30,6 +30,7 @@ const { ethers } = require("ethers");
 const BRIDGE_MOD = require.resolve("../tools/eth/eth-bridge");
 require(BRIDGE_MOD);
 let SPONSOR_WEI = 0n;
+let TX_STATE = "dropped";              // "mined" | "pending" | "dropped"
 let TRANSIT_WEI = 0n;
 const GWEI = 3n * 10n ** 9n;
 const SPONSOR_KEY = "0x" + "77".repeat(32);
@@ -41,6 +42,10 @@ require.cache[BRIDGE_MOD].exports = {
     getBalance: async (addr) =>
       (String(addr).toLowerCase() === SPONSOR_ADDR.toLowerCase() ? SPONSOR_WEI : TRANSIT_WEI),
     getBlockNumber: async () => 1,
+    /* What the chain says about the job's pending transaction: MINED, a
+       receipt; PENDING, a transaction but no receipt; DROPPED, neither. */
+    getTransactionReceipt: async () => (TX_STATE === "mined" ? { status: 1, blockNumber: 2 } : null),
+    getTransaction: async () => (TX_STATE === "dropped" ? null : { hash: "0x", blockNumber: null }),
   }),
 };
 
@@ -163,6 +168,65 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "stalled-"));
     assert.ok(pub.stalled, "waiting on a receipt for half an hour is stalled");
     assert.match(pub.stalled.pendingTx, /^0xabab/, "and the transaction is named, so it can be looked up");
     console.log("✓ a transaction that never mined is named rather than waited on forever");
+  }
+
+  /* --- 7. Retry works on a stalled job, not only a failed one --- */
+  {
+    SPONSOR_WEI = ethers.parseEther("0.5");
+    TX_STATE = "dropped";              // the never-mined redeem, gone from the mempool
+    park({
+      status: "wh_redeem", route: "S", estKoinOut: "97367990000",
+      pendingTx: "0x" + "de".repeat(32),
+      statusAt: Date.now() - 28 * 60 * 1000,
+    });
+    const out = await funding.resume(ACCT);
+    assert.ok(out, "a stalled job resumes — this answered 'Nothing to resume'");
+    assert.strictEqual(funding.job(ACCT).pendingTx, null,
+      "the dropped transaction is cleared so the step can be sent again");
+    console.log("✓ Retry resumes a STALLED job and clears the transaction that never mined");
+  }
+
+  /* --- 8. but never re-sends a spend that is still in flight --- */
+  {
+    TX_STATE = "pending";              // still in the mempool
+    park({
+      status: "swap_usdt_vkoin", route: "C", usdtSats: "1000000",
+      pendingTx: "0x" + "ee".repeat(32),
+      statusAt: Date.now() - 28 * 60 * 1000,
+    });
+    const err = await funding.resume(ACCT).then(() => null, (e) => String(e.message));
+    assert.ok(err && /still waiting to be mined/.test(err),
+      `a live swap must not be re-sent, got: ${err}`);
+    assert.ok(funding.job(ACCT).pendingTx, "and its transaction is left alone");
+    console.log("✓ a spend still in the mempool is refused, not sent twice");
+  }
+
+  /* --- 9. a step that checks the chain first may retry around it --- */
+  {
+    TX_STATE = "pending";
+    park({
+      status: "wh_redeem", route: "S",
+      pendingTx: "0x" + "ff".repeat(32),
+      statusAt: Date.now() - 28 * 60 * 1000,
+    });
+    const out = await funding.resume(ACCT).then((r) => r, (e) => ({ error: String(e.message) }));
+    assert.ok(!out.error,
+      `wh_redeem asks the bridge before it spends, so it may retry: ${out.error}`);
+    console.log("✓ an idempotent step may retry around a pending transaction");
+  }
+
+  /* --- 10. a transaction that landed after all is left to be read --- */
+  {
+    TX_STATE = "mined";
+    park({
+      status: "wh_redeem", route: "S",
+      pendingTx: "0x" + "aa".repeat(32),
+      statusAt: Date.now() - 28 * 60 * 1000,
+    });
+    await funding.resume(ACCT);
+    assert.ok(funding.job(ACCT).pendingTx,
+      "a mined transaction is kept, so its receipt is read instead of the step re-run");
+    console.log("✓ a transaction that landed after all is kept, not thrown away");
   }
 
   console.log("\nALL STALLED-JOB CHECKS PASSED");
