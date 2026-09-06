@@ -230,9 +230,12 @@ whatever is in flight when a sweep lands:
 | 20 gwei | ~$270 | 8 |
 | 50 gwei | ~$520 | 20 |
 
-**About $500 covers gas up to roughly 50 gwei.** `/api/fund/status` reports
-`float` — the balance, the requirement at today's gas, how many jobs that
-covers and whether it is healthy — so it never has to be guessed at.
+**About $500 covers gas up to roughly 50 gwei.** `/api/config` reports
+`float` — the sponsor's address, its balance, the requirement at today's gas,
+how many worst-case jobs that covers and whether it is healthy — so it never
+has to be guessed at. It is on `/api/config` rather than `/api/fund/status`
+because the latter reports ONE account and needs that account's passkey;
+everything in `float` is already public on Ethereum.
 
 **It is taken in whatever the route is already holding, so nothing extra is
 swapped for it.** Route T and ETH deposits pay in ether the moment they hold

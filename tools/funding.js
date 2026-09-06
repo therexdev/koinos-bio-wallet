@@ -1288,8 +1288,10 @@ async function feeInToken(p, kind, feeWei) {
     threshold discounted by the buffer, plus whatever could be in flight — see
     floatPlan in tools/eth/fees.js. Reported so nobody has to guess when to
     top it up, or by how much. */
+let _float = { at: 0, v: null };
 async function floatHealth() {
   if (!S.gasSponsorKey) return { sponsored: false };
+  if (_float.v && Date.now() - _float.at < 60000) return _float.v;
   const p = await ethProvider();
   const wallet = new ethers.Wallet(S.gasSponsorKey, p);
   const [balance, swapCost, rate] = await Promise.all([
@@ -1299,13 +1301,15 @@ async function floatHealth() {
   const maxJobWei = rate > 0 ? ethers.parseEther((S.fee.maxSponsoredUsd / rate).toFixed(18)) : 0n;
   const plan = fees.floatPlan({ swapCostWei: swapCost, maxSponsoredWei: maxJobWei, cfg: S.fee });
   const usd = (w) => (rate > 0 ? Number((Number(ethers.formatEther(w)) * rate).toFixed(2)) : undefined);
-  return {
+  const out = {
     sponsored: true, address: wallet.address,
     balanceEth: ethers.formatEther(balance), balanceUsd: usd(balance),
     requiredEth: ethers.formatEther(plan.requiredWei), requiredUsd: usd(plan.requiredWei),
     jobsBeforeSweep: plan.jobsBeforeSweep,
     healthy: balance >= plan.requiredWei,
   };
+  _float = { at: Date.now(), v: out };
+  return out;
 }
 
 /** Ether in dollars, from the same Uniswap pool the routes trade through.
@@ -1750,4 +1754,6 @@ module.exports = {
   _sdkReady: probeSdk,
   /* the gas decision for a Solana job's Ethereum tail, without a chain */
   _gasDecision: gasDecision,
+  /* the sponsor float: what it holds against what it needs, for the operator */
+  floatHealth,
 };

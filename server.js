@@ -198,6 +198,10 @@ api.config = async () => {
     /* Whether the optional Solana packages are installed on this host. The
        reason is only logged, never published — it carries server paths. */
     solRail: funding._solRail().enabled,
+    /* The gas float, so its health can be seen without a passkey. Everything
+       here is already public on Ethereum; cached for a minute because this
+       endpoint is hit on every page load. */
+    float: await funding.floatHealth().catch(() => undefined),
     accountKind: 'veive',
     network: CFG.network,
     networkLabel: net.label,
@@ -581,7 +585,14 @@ api.fundEnable = async (body, ip) => {
 
 api.fundStatus = async (params) => {
   const rec = veive.status(String(params.get('credentialId') || ''));
-  if (!rec) throw httpError(404, 'no account for that passkey');
+  if (!rec) {
+    /* Reached most often by opening this URL in a browser: it reports ONE
+       account and needs its passkey, so say that rather than implying the
+       account is missing. */
+    throw httpError(404, params.get('credentialId')
+      ? 'no account for that passkey'
+      : 'this endpoint reports one account and needs ?credentialId=… — for how the server itself is doing, see /api/config');
+  }
   funding.enable(rec.address); // every account has a deposit address, automatically
   return {
     ok: true,
