@@ -415,6 +415,25 @@ why on `/api/config`.
 4. Visit `/api/config` — expect `"demo":false` and the three module
    addresses under `"modules"`.
 
+**Redeploying, and checking what is actually live.** Nothing in this repo
+pushes to the host; Hostinger pulls. So after a push, redeploy there — and
+when a release adds dependencies (the Solana rail added five), the deploy must
+run `npm install` and then RESTART the Node app, or the old process keeps
+serving. `/api/config` reports what is running:
+
+| field | meaning |
+|---|---|
+| `version` | the `package.json` version of the running code |
+| `commit` | the commit it was built from (absent if the deploy strips `.git`) |
+| `solRail` | whether the optional Solana packages are installed here |
+
+If `commit` does not match `git rev-parse HEAD`, the deploy did not take. The
+service worker is network-first and never caches `/api`, so a stale screen is
+always the server, never the browser cache. The Solana rail needs Node 20.19+
+for its Wormhole packages; everything else runs on Node 18, and where the
+packages are missing or unusable the rail reports itself off and the rest of
+the wallet is unaffected.
+
 WebAuthn requires HTTPS (any real domain qualifies; `localhost` works for dev).
 
 ## Security model

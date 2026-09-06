@@ -1,6 +1,6 @@
 {
   "name": "koinos-bio-wallet",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Veive-style smart accounts sealed by your own biometrics — one passkey scan deploys a real on-chain account whose only authority is that passkey, verified by the chain itself. Feeless via its own mana sharer.",
   "main": "server.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "infra-deploy": "node tools/infra-deploy.js"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=18"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

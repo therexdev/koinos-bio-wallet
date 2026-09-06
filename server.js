@@ -161,11 +161,43 @@ const explorerTx = (txid) => (NETWORKS[CFG.network].explorer ? `${NETWORKS[CFG.n
 
 const api = {};
 
+/** What is actually running here.
+
+    "I pushed it but I don't see it live" has no answer without this: the
+    service worker is network-first and never caches /api, so a stale screen
+    can only mean the SERVER is still on old code. This states the version and
+    the commit so that question is one request away. Best effort — a deploy
+    that strips .git still reports the package version. */
+const BUILD = (() => {
+  const version = require('./package.json').version;
+  const git = (rel) => fs.readFileSync(path.join(__dirname, '.git', rel), 'utf8').trim();
+  let commit = null;
+  try {
+    const head = git('HEAD');
+    if (!head.startsWith('ref: ')) commit = head;
+    else {
+      const ref = head.slice(5).trim();
+      try { commit = git(ref); }
+      catch (_) {
+        /* a fresh clone keeps its refs packed */
+        const line = git('packed-refs').split('\n').find((l) => l.endsWith(' ' + ref));
+        if (line) commit = line.split(' ')[0];
+      }
+    }
+  } catch (_) { /* deployed without .git — the version is what we have */ }
+  return { version, commit: commit ? commit.slice(0, 12) : null };
+})();
+
 api.config = async () => {
   const net = NETWORKS[CFG.network];
   return {
     ok: true,
     app: 'Koinos Bio Wallet',
+    version: BUILD.version,
+    commit: BUILD.commit || undefined,
+    /* Whether the optional Solana packages are installed on this host. The
+       reason is only logged, never published — it carries server paths. */
+    solRail: funding._solRail().enabled,
     accountKind: 'veive',
     network: CFG.network,
     networkLabel: net.label,
