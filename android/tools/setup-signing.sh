@@ -23,18 +23,41 @@ command -v gh >/dev/null || {
   exit 1
 }
 
-# Writing secrets needs more than the token a codespace starts with.
+# Writing secrets needs more than the token a codespace starts with. That
+# token lives in GITHUB_TOKEN and gh prefers it over anything you log in
+# with — so once a proper login exists, this has to look PAST the
+# environment to find it. Try as-is, then again without the env token.
+GH_ENVLESS=false
 if ! gh secret list --repo "$REPO" >/dev/null 2>&1; then
-  cat >&2 <<'MSG'
-gh cannot write secrets for this repository yet. Run this once:
+  if env -u GITHUB_TOKEN -u GH_TOKEN gh secret list --repo "$REPO" >/dev/null 2>&1; then
+    GH_ENVLESS=true          # a real login exists; the env token was the problem
+  else
+    cat >&2 <<MSG
+gh cannot write secrets for this repository yet.
 
-    gh auth refresh -h github.com -s repo
+A codespace signs gh in with a token from the environment that is not
+allowed to write secrets, and it CANNOT be upgraded — 'gh auth refresh'
+will refuse it. It has to be replaced with your own login. Two lines:
 
-It prints a code and a URL: open the URL, type the code, approve. Then run
-this script again.
+    unset GITHUB_TOKEN GH_TOKEN
+    gh auth login --hostname github.com --scopes repo --web
+
+It prints a one-time code, then a URL. Open the URL, type the code,
+approve. Then run this script again:
+
+    bash android/tools/setup-signing.sh
+
+(If it asks "What account do you want to log into?" choose GitHub.com,
+and for protocol choose HTTPS.)
 MSG
-  exit 1
+    exit 1
+  fi
 fi
+# Every gh call from here uses whichever credential actually works.
+# `env` execs a binary, and `command` is a shell builtin — so `env ... command gh`
+# looks for a program called "command" and fails. env finds gh on PATH by
+# itself, and an exec'd binary never re-enters this function.
+gh() { if [ "$GH_ENVLESS" = true ]; then env -u GITHUB_TOKEN -u GH_TOKEN gh "$@"; else command gh "$@"; fi; }
 
 # An existing key is only worth keeping if its password is known and works.
 # Nothing is published to Play yet, so a key that cannot be opened is not a
