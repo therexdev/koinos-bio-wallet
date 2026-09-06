@@ -96,10 +96,37 @@ https://wallet.usekoinos.com/privacy
 ```
 Live now — that page ships with the site.
 
-### App access
-Choose **All functionality is available without special access**. The wallet
-creates an account with a passkey on first launch; there is no login for a
-reviewer to be given.
+### Sign in details  (was called "App access")
+
+**Answer YES.** "Biometric authentication" is on Play's own list for Yes, and
+this app is gated on it in a way that will fail a review device otherwise:
+`public/js/app.js` disables the only button on the first screen when
+`isUserVerifyingPlatformAuthenticatorAvailable()` is false, which is the case
+on an emulator with no screen lock enrolled. A reviewer who cannot get past
+screen one is a rejection.
+
+There is no username or password to hand over — leave those blank and paste
+this into **"Any other instructions"**:
+
+```
+This wallet has no username or password. Sign-in is a passkey (WebAuthn)
+created on the device, so please review on a device or emulator WITH A SCREEN
+LOCK ENROLLED (Settings > Security > Screen lock: PIN, pattern, fingerprint or
+face). Without one, Android reports no platform authenticator and the app
+correctly disables its sign-in button.
+
+To review:
+1. Enrol any screen lock on the test device.
+2. Open the app and tap "Create my wallet".
+3. Approve the system passkey prompt (the device PIN works; no fingerprint
+   hardware is required).
+
+That creates a real Koinos smart account and opens the whole app. Nothing is
+behind a payment, an invite code or a waiting list, and no part of the app
+needs an account we hold. Re-opening the app signs in with the same passkey.
+
+Questions: support@usekoinos.com
+```
 
 ### Ads
 **No, my app does not contain ads.** (There are none — no ad SDK is bundled.)
