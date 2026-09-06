@@ -463,6 +463,10 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .fund-chain { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
 .sol-off { color: var(--warn); text-align: center; }
 .fund-balances .fund-solerr { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
+.why-none p { margin: 0 0 8px; }
+.why-none p:last-child { margin-bottom: 0; }
+.why-none strong { color: var(--bright); }
+.why-tech { display: block; margin-top: 3px; color: var(--dim); font: 500 11px/15px var(--mono); word-break: break-word; }
 .fund-chain .step-head { margin-bottom: 4px; }
 .fund-chain .step-head .k { font-size: 14px; }
 .fund-addr { font-size: 13px; }

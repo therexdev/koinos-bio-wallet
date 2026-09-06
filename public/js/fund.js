@@ -255,6 +255,36 @@ const Fund = (() => {
     } finally { BUSY = false; btn.disabled = false; }
   }
 
+  const num = (v, dp) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: dp });
+
+  /* When nothing is convertible, say WHY — per asset, naming the number that
+     is in the way. "Waiting for a deposit" is a lie when the deposit is
+     already sitting there and something else is blocking it, and a person
+     staring at their own balance with no button is owed the reason. */
+  function whyNothing(st, b, solConvert) {
+    const sp = st.spendable || {};
+    const has = (v) => Number(v) > 0;
+    const rows = [];
+    if (b && has(b.sol) && !has(sp.sol)) {
+      if (!solConvert) {
+        rows.push(`<strong>SOL</strong> — this server cannot convert Solana yet, so no route is offered. Your ${esc(num(b.sol, 4))} SOL is safe where it is and converts once that is fixed.`
+          + (st.solRail && st.solRail.reason ? `<span class="why-tech">${esc(st.solRail.reason)}</span>` : ''));
+      } else {
+        rows.push(`<strong>SOL</strong> — you have ${esc(num(b.sol, 4))}, and converting needs at least <strong>${esc(st.solFloor || '0.06')} SOL</strong> at that address: a little stays behind for Solana fees, and the smallest swap is ${esc(st.solMin || '0.05')} SOL. Ethereum gas may push the workable amount higher; the quote says exactly once you are over the line.`);
+      }
+    }
+    if (b && has(b.eth) && !has(sp.eth)) {
+      rows.push(`<strong>ETH</strong> — ${esc(num(b.eth, 5))} is at or below what must stay behind for Ethereum gas, so there is nothing left to swap.`);
+    }
+    for (const [k, sym] of [['usdc', 'USDC'], ['usdt', 'USDT']]) {
+      if (b && has(b[k]) && !has(sp[k])) rows.push(`<strong>${sym}</strong> — ${esc(num(b[k], 2))} cannot be swapped right now.`);
+    }
+    if (!rows.length) {
+      return 'Waiting for a deposit — balances appear here within a minute of the transfer confirming.';
+    }
+    return '<div class="why-none">' + rows.map((r) => `<p>${r}</p>`).join('') + '</div>';
+  }
+
   /* The mobile shell's extras (tab dot, SIMULATED chip, deposit QR, dimmed
      zero rows). Each is null-guarded: the card must keep working in a page
      that has none of these elements. */
@@ -442,6 +472,7 @@ const Fund = (() => {
       const focused = document.activeElement && assets.contains(document.activeElement);
       if (!focused) assets.innerHTML = panels.join('');
       $('#fund-empty').hidden = !!panels.length;
+      if (!panels.length) $('#fund-empty').innerHTML = whyNothing(st, b, solConvert);
     } else if (jobActive) {
       assets.innerHTML = '';
       $('#fund-empty').hidden = true;
