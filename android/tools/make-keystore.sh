@@ -74,8 +74,23 @@ STEP 1 — Add four secrets to GitHub.
 
 STEP 2 — Back the key up.
 
-  Download $out and keep it somewhere you will still
-  have in five years. Save this password with it: $pw
+  The key is OUTSIDE the repository, which is why the Explorer panel on
+  the left does not list it. To download it, bring it in for a moment:
+
+      cp $out .
+
+  It appears in the Explorer. Right-click it -> Download. Then:
+
+      rm $(basename "$out")
+
+  That is safe: *.jks is git-ignored at the repository root, so git will
+  not track it either way.
+
+  Keep the downloaded file somewhere you will still have in five years,
+  and save this password with it:
+
+      $pw
+
   Without both, this app can never be updated again.
 
 STEP 3 — Build a signed app.

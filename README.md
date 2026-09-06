@@ -357,9 +357,24 @@ installed locally.
 4. It prints a numbered list. Follow it: four secrets to paste into
    **Settings → Secrets and variables → Actions**, then the file to download
    as your backup.
-5. Download the key: in the file explorer, **...** → *Download*, on
-   `koinos-bio-wallet-release.jks` in your home folder. Keep it and its
-   password somewhere you will still have in five years.
+5. Download the key. The Explorer panel only shows the repository folder,
+   and the key is deliberately written *outside* it — so bring it in for a
+   moment, download it, and put it back:
+
+   ```bash
+   cp ~/koinos-bio-wallet-release.jks .        # now visible in the Explorer
+   ```
+
+   Right-click it in the Explorer → **Download**. Then:
+
+   ```bash
+   rm koinos-bio-wallet-release.jks            # tidy up; the original is still in ~
+   ```
+
+   Copying it in is safe — `*.jks` is ignored at the repository root, so git
+   will not track it (`git check-ignore -v koinos-bio-wallet-release.jks`
+   proves it). Keep the downloaded file and its password somewhere you will
+   still have in five years.
 6. Delete the codespace when finished (github.com/codespaces → **...** →
    *Delete*). The key is already in the secrets and in your download.
 
