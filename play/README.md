@@ -106,26 +106,20 @@ on an emulator with no screen lock enrolled. A reviewer who cannot get past
 screen one is a rejection.
 
 There is no username or password to hand over — leave those blank and paste
-this into **"Any other instructions"**:
+this into **"Any other instructions"**. That field caps at **500 characters**;
+this is 486, so it goes in whole. (The support address is left out on purpose:
+Play already has it from the store listing contact details.)
 
 ```
-This wallet has no username or password. Sign-in is a passkey (WebAuthn)
-created on the device, so please review on a device or emulator WITH A SCREEN
-LOCK ENROLLED (Settings > Security > Screen lock: PIN, pattern, fingerprint or
-face). Without one, Android reports no platform authenticator and the app
-correctly disables its sign-in button.
+No username or password: sign-in is a device passkey (WebAuthn).
 
-To review:
-1. Enrol any screen lock on the test device.
-2. Open the app and tap "Create my wallet".
-3. Approve the system passkey prompt (the device PIN works; no fingerprint
-   hardware is required).
+Review on a device or emulator WITH A SCREEN LOCK ENROLLED (Settings > Security > Screen lock). Without one Android reports no platform authenticator and the sign-in button is disabled.
 
-That creates a real Koinos smart account and opens the whole app. Nothing is
-behind a payment, an invite code or a waiting list, and no part of the app
-needs an account we hold. Re-opening the app signs in with the same passkey.
+1. Enrol any screen lock (PIN is fine).
+2. Tap "Create my wallet".
+3. Approve the passkey prompt — the device PIN works, no fingerprint hardware needed.
 
-Questions: support@usekoinos.com
+That opens the entire app. Nothing is behind a payment, invite or waiting list.
 ```
 
 ### Ads
