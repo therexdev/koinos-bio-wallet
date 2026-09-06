@@ -61,9 +61,10 @@ function descriptor(id) {
 function compareRoutes(quotes) {
   const list = Array.isArray(quotes) ? quotes : [];
   const quoted = list.filter((r) => r && r.koinOut != null && safeBig(r.koinOut) > 0n);
-  quoted.sort((a, b) => cmpBig(safeBig(b.koinOut), safeBig(a.koinOut)));
+  const net = (r) => safeBig(r.comparisonKoinOut ?? r.koinOut);
+  quoted.sort((a, b) => cmpBig(net(b), net(a)));
   const best = quoted[0] || null;
-  const bestKoin = best ? safeBig(best.koinOut) : 0n;
+  const bestKoin = best ? net(best) : 0n;
 
   const routes = list.map((r) => {
     if (!r) return r;
@@ -72,9 +73,9 @@ function compareRoutes(quotes) {
     let pctOfBest = null; // this route's KOIN as a % of the best (100 = best)
     let bestMultiple = null; // how many× more the best yields than this route
     if (has && bestKoin > 0n) {
-      const mine = safeBig(r.koinOut);
+      const mine = net(r);
       pctOfBest = Number((mine * 10000n) / bestKoin) / 100;
-      bestMultiple = Number((bestKoin * 1000n) / mine) / 1000;
+      bestMultiple = mine > 0n ? Number((bestKoin * 1000n) / mine) / 1000 : null;
     }
     return { ...r, isBest, pctOfBest, bestMultiple };
   });
