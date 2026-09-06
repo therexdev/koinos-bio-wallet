@@ -14,15 +14,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "ethers": "^6.17.0",
-    "koilib": "^9.0.0"
-  },
-  "optionalDependencies": {
     "@solana/web3.js": "^1.98.4",
     "@wormhole-foundation/sdk-connect": "^6.1.5",
     "@wormhole-foundation/sdk-solana": "^6.1.5",
     "@wormhole-foundation/sdk-solana-core": "^6.1.5",
-    "@wormhole-foundation/sdk-solana-tokenbridge": "^6.1.5"
+    "@wormhole-foundation/sdk-solana-tokenbridge": "^6.1.5",
+    "ethers": "^6.17.0",
+    "koilib": "^9.0.0"
   },
   "license": "MIT"
 }
