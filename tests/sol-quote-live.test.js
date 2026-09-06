@@ -71,122 +71,66 @@ const ACCT = "1LiveSolQuoteAccountXXXXXXXXXXXXXX";
 const wei = (n) => ethers.parseEther(String(n));
 const koin = (sats) => Number(ethers.formatUnits(BigInt(sats), 8));
 
-function boot({ sponsor }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solquote-"));
-  process.env.ETH_GAS_SPONSOR_KEY = sponsor ? "0x" + "11".repeat(32) : "";
-  delete require.cache[require.resolve("../tools/funding")];
-  return dir;
-}
-
 (async () => {
-  /* The sponsor key is read into config at require time, so drive it through
-     the exported knob instead of reloading the module. */
-  funding.configure({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "solquote-")), demo: false, network: "mainnet" });
-  assert.ok(await funding._sdkReady(), "the Wormhole SDK loads");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solquote-v2-"));
+  funding.configure({ dataDir: dir, demo: false, network: "mainnet", gasSponsorKey: "",
+    fee: require("../tools/eth/fees").config({ FUND_FEE_TREASURY: "0x3333333333333333333333333333333333333333" }) });
+  swap.allowance = async () => 0n;
   funding.enable(ACCT);
 
-  /* Gas, at 3 gwei with the 50% headroom the reserve uses:
-       the Ethereum swaps  900_000 × 1.5 × 3 gwei = 0.00405 ETH
-       the Wormhole redeem 150_000 × 1.5 × 3 gwei = 0.000675 ETH
-       the Vortex tail     260_000 × 1.5 × 3 gwei = 0.00117 ETH  */
-  const RESERVE = 0.00405, REDEEM = 0.000675, VORTEX = 0.00117;
+  TRANSIT_ETH = wei("1");
+  const q = await funding.quoteFor(ACCT, "sol", "0.2");
+  const t = q.routes.find((r) => r.id === "T"), s = q.routes.find((r) => r.id === "S");
+  assert.ok(t.koinOut && s.koinOut, JSON.stringify(q.routes));
+  assert.equal(q.best.id, "T");
+  assert.ok(t.quoteId && t.quoteExpiresAt > Date.now());
+  assert.equal(t.feeModel, 2);
 
-  /* --- 1. it runs at all, which is the regression this file exists for --- */
-  {
-    TRANSIT_ETH = wei("1");            // plenty, so nothing is gated on gas
-    const q = await funding.quoteFor(ACCT, "sol", "0.2");
-    assert.strictEqual(q.asset, "sol", "the quote names its asset — this threw ReferenceError once");
-    assert.strictEqual(q.amount, "0.2");
-    assert.deepStrictEqual(q.routes.map((r) => r.id).sort(), ["S", "T"]);
-    assert.ok(q.best, "a live SOL quote produces a usable route");
-    console.log("✓ the live SOL quote runs and names both routes");
-  }
+  // Independent route budgets at 3 gwei: 20% gas headroom and 25% price
+  // headroom = 4.5 gwei per unpadded unit. No reset is needed at allowance 0.
+  // T tail 885k + optional signature renewal 65k + collection 21k.
+  const tailAndCollection = 971000 * 4.5e-9;
+  const platform = 0.03 * 0.01;
+  assert.ok(Math.abs(koin(t.koinOut) - (0.03 - tailAndCollection - platform) * KOIN_PER_ETH) < 0.01);
+  assert.ok(Math.abs(Number(t.feeEth) - (1106000 * 3e-9 + platform)) < 1e-12,
+    "expected fees exclude the unused signature-renewal contingency");
+  assert.ok(Math.abs(Number(t.maxFeeEth) - (1171000 * 4.5e-9 + platform)) < 1e-12);
+  const floor = (0.03 * FILL - tailAndCollection - platform) * KOIN_PER_ETH * FILL;
+  assert.ok(Math.abs(koin(t.koinOutMin) - floor) < 0.01,
+    "the final minimum accounts for the worst Solana fill and downstream budget");
+  assert.equal(t.sponsorMaxEth, "0.0", "existing ETH is used before sponsorship");
+  assert.equal(koin(s.koinOut), 1200, "S pays its fees separately in ETH, so do not deduct them twice from KOIN delivery");
+  assert.ok(BigInt(s.comparisonKoinOut) < BigInt(s.koinOut), "route ranking still includes separately paid ETH fees");
+  console.log("✓ live SOL quotes share the accepted fee plan, include all ETH costs and rank net value");
 
-  /* --- 2. route T's numbers, checked by hand --- */
-  {
-    TRANSIT_ETH = wei("1");
-    const q = await funding.quoteFor(ACCT, "sol", "0.2");
-    const t = q.routes.find((r) => r.id === "T");
-    /* 0.2 SOL → 0.03 ETH; less the 0.00405 reserve = 0.02595 spent. */
-    /* No sponsor key in this run and the deposit address holds its own ether,
-       so nothing is borrowed: the fee is the 1% rate alone. */
-    const platform = 0.03 * 0.01;
-    const spend = 0.2 * 0.15 - RESERVE - platform;
-    assert.strictEqual(t.ethBought, "0.03", "what the SOL buys in ether");
-    assert.ok(Math.abs(koin(t.koinOut) - spend * KOIN_PER_ETH) < 0.01,
-      `route T is priced on what is left after gas AND fee: ${koin(t.koinOut)}`);
-    assert.ok(Math.abs(Number(t.feeEth) - (RESERVE + platform)) < 1e-9, "and reports gas plus fee as one number");
-    assert.ok(Math.abs(t.feeUsd - (RESERVE + platform) * ETH_USD) < 0.02, "in dollars too");
-    assert.ok(t.feePct > 0 && t.feePct < 100, "and as a share of the conversion");
+  TRANSIT_ETH = 0n;
+  const empty = await funding.quoteFor(ACCT, "sol", "0.2");
+  assert.equal(empty.best, null);
+  assert.ok(empty.routes.every((r) => r.koinOut === null && /ETH/.test(r.error)));
+  console.log("✓ no sponsor and no ETH means no route is offered before SOL moves");
 
-    /* The floor must assume Jupiter fills at ITS threshold, not its mid. */
-    const worstArrived = 0.2 * 0.15 * FILL;
-    const floor = (worstArrived - RESERVE - platform) * KOIN_PER_ETH * FILL;
-    assert.ok(Math.abs(koin(t.koinOutMin) - floor) < 0.01,
-      `the floor is priced on the worst Solana fill: ${koin(t.koinOutMin)} vs ${floor}`);
-    /* The bug this replaces: pricing the floor on the EXPECTED fill, which
-       lands above what the route can actually guarantee. */
-    const naive = (0.2 * 0.15 - RESERVE - platform) * KOIN_PER_ETH * FILL;
-    assert.ok(koin(t.koinOutMin) < naive - 1, "and is genuinely below the optimistic figure it used to print");
-    assert.ok(koin(t.koinOutMin) < koin(t.koinOut), "a floor is below the expectation");
-    console.log("✓ route T: net of its own gas, with a floor that assumes the worst fill on both legs");
-  }
+  TRANSIT_ETH = wei("0.0015");
+  const partial = await funding.quoteFor(ACCT, "sol", "0.2");
+  assert.ok(partial.routes.find((r) => r.id === "T").quoteId);
+  assert.equal(partial.routes.find((r) => r.id === "S").koinOut, null);
+  console.log("✓ T can bootstrap from existing ETH when S cannot cover its full ETH tail");
 
-  /* --- 3. route S is charged the gas the platform spends for it --- */
-  {
-    TRANSIT_ETH = wei("1");
-    const q = await funding.quoteFor(ACCT, "sol", "0.2");
-    const s = q.routes.find((r) => r.id === "S");
-    const gross = 0.2 * 6000;
-    /* everything on Ethereum is borrowed, so the fee recovers it plus 20%,
-       plus 1% of the 0.03 ETH the SOL is worth */
-    /* Unsponsored too, so route S pays its Ethereum tail out of the deposit
-       address and the platform fee is again just the rate. */
-    const platformS = 0.03 * 0.01;
-    assert.ok(Math.abs(koin(s.koinOut) - (gross - (platformS + REDEEM + VORTEX) * KOIN_PER_ETH)) < 0.01,
-      `route S is quoted net of its Ethereum tail and the fee: ${koin(s.koinOut)}`);
-    assert.ok(Math.abs(Number(s.feeEth) - (platformS + REDEEM + VORTEX)) < 1e-9);
-    /* The card never claims anyone else pays: the fee is deducted from the
-       conversion whoever fronts the gas, so no payer field is published. */
-    assert.strictEqual(s.feePaidBy, undefined, "no route claims the fee is covered for you");
-    /* 0.2 SOL is 1200 KOIN through the Solana pool but 1297.5 through the
-       deeper Ethereum one, and the fees only widen it — so the ranking picks
-       route T, and does so on the net numbers rather than the gross. */
-    const t2 = q.routes.find((r) => r.id === "T");
-    assert.ok(koin(t2.koinOut) > koin(s.koinOut), "route T lands more");
-    assert.strictEqual(q.best.id, "T", "and the ranking follows the maths");
-    assert.ok(koin(s.koinOut) < gross, "route S is ranked on what it nets, not on its gross output");
-    console.log("✓ route S carries the cost of the tail somebody has to pay for it");
-  }
-
-  /* --- 4. no sponsor and an empty deposit address: neither route pretends --- */
-  {
-    TRANSIT_ETH = 0n;
-    const q = await funding.quoteFor(ACCT, "sol", "0.2");
-    assert.strictEqual(q.best, null, "nothing can run, so nothing is offered");
-    for (const r of q.routes) {
-      assert.strictEqual(r.koinOut, null);
-      assert.match(r.error, /needs gas/, `route ${r.id} says why: ${r.error}`);
-    }
-    await assert.rejects(funding.start(ACCT, { asset: "sol", amount: "0.2" }), /gas|quoted/,
-      "and start refuses before any SOL moves");
-    console.log("✓ with no sponsor and no ether, both routes are refused up front");
-  }
-
-  /* --- 5. enough for the redeem but not for route S's whole tail --- */
-  {
-    /* max(redeem, ETH_GAS_MIN) is affordable; redeem + Vortex is not. */
-    TRANSIT_ETH = wei("0.0015");
-    const q = await funding.quoteFor(ACCT, "sol", "0.2");
-    const t = q.routes.find((r) => r.id === "T");
-    const s = q.routes.find((r) => r.id === "S");
-    assert.ok(t.koinOut != null, "route T only needs the redeem paid for, and brings the rest with it");
-    assert.strictEqual(s.koinOut, null, "route S needs its whole Ethereum tail funded, and cannot be");
-    assert.match(s.error, /needs gas/);
-    assert.strictEqual(q.best.id, "T");
-    console.log("✓ the route that brings its own gas survives where the other cannot");
-  }
-
+  await assert.rejects(funding.start(ACCT, { asset: "sol", amount: "0.2", route: "T" }), /quote expired/);
+  const begun = await funding.start(ACCT, { asset: "sol", amount: "0.2", route: "T", quoteId: partial.best.quoteId });
+  assert.equal(begun.status, "sol_swap");
+  assert.equal(begun.feeModel, 2);
+  const internal = funding.job(ACCT);
+  assert.equal(internal.feePlan.id, partial.best.quoteId);
+  funding._saveJob(ACCT, { ...internal, status: "error", failedAt: "wh_redeem", pendingEth: { raw: "PRIVATE_SIGNED_BYTES" }, pendingSolRaw: "PRIVATE_SOL_BYTES" });
+  assert.ok(!JSON.stringify(funding.publicJob(funding.job(ACCT))).includes("PRIVATE_"));
+  assert.throws(() => funding.reset(ACCT), /reconcile/);
+  funding._saveJob(ACCT, { ...internal, status: "done", settlementComplete: true, reservationReleased: true });
+  funding.reset(ACCT);
+  const persisted = JSON.parse(fs.readFileSync(path.join(dir, "funding.json"), "utf8"));
+  assert.equal(persisted.history[internal.id].id, internal.id, "reset preserves the durable job history");
+  assert.equal(persisted.jobs[ACCT], undefined);
+  console.log("✓ start binds the quote; private transaction bytes stay private and reset retains history");
+  fs.rmSync(dir, { recursive: true, force: true });
   console.log("\nALL LIVE SOL-QUOTE CHECKS PASSED");
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

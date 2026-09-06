@@ -39,6 +39,11 @@ const Fund = (() => {
     bridge_token: 'Bridging vKOIN → Koinos (Vortex, 1:1)…',
     deposit_eth: 'Depositing ETH into the Vortex bridge…',
     collect_fee: 'Taking the conversion fee…',
+    gas_approve_reset: 'Preparing the token allowance for gas…',
+    gas_approve: 'Approving a small token amount for gas…',
+    gas_buy_eth: 'Converting the reserved token amount to ETH for gas and repayment…',
+    approve_permit2_reset: 'Updating the Uniswap token allowance…',
+    request_signatures: 'Refreshing bridge signatures within your gas budget…',
     /* The Solana routes (S and T) — see stepLabel for the wording, which
        depends on what the SOL was swapped into. */
     awaiting_vaa: 'Wormhole guardians are signing (usually 1–2 minutes)…',
@@ -91,7 +96,7 @@ const Fund = (() => {
       const go = e.target.closest('button[data-route]');
       if (go) {
         const panel = go.closest('.fund-asset');
-        startSwap(panel.dataset.asset, panel.querySelector('input[data-amt]').value.trim(), go.dataset.route, go);
+        startSwap(panel.dataset.asset, panel.querySelector('input[data-amt]').value.trim(), go.dataset.route, go, go.dataset.quote);
       }
     });
     assets.addEventListener('input', (e) => {
@@ -174,6 +179,7 @@ const Fund = (() => {
       box.innerHTML = '<div class="hint">Pricing routes…</div>';
       try {
         const r = await CTX.api('/api/fund/quote', { credentialId: CTX.credentialId(), asset, amount });
+        if (panel.querySelector('input[data-amt]').value.trim() !== amount) return;
         box.innerHTML = routesHtml(asset, r.quote);
       } catch (e) {
         box.innerHTML = '<div class="fund-unavail">' + esc(e.message || 'Quote failed') + '</div>';
@@ -193,26 +199,29 @@ const Fund = (() => {
       if (r.koinOut == null) {
         return `<div class="fund-route">${head}${steps}<div class="fund-unavail">unavailable: ${esc(r.error || 'no quote')}</div></div>`;
       }
-      const best = r.isBest ? ' <span class="fund-best">★ best</span>'
-        : (r.pctOfBest != null ? ` <span class="fund-worse">— ${r.pctOfBest}% of best</span>` : '');
-      const min = r.koinOutMin ? ` <span class="fund-min">(min ${koin(r.koinOutMin)} after slippage)</span>` : '';
+      const best = r.isBest ? ' <span class="fund-best">★ best after fees</span>'
+        : (r.pctOfBest != null ? ` <span class="fund-worse">— ${r.pctOfBest}% of best after fees</span>` : '');
+      const min = r.koinOutMin ? ` <span class="fund-min">(min ${koin(r.koinOutMin)} ${r.minimumConditional ? 'if the route completes within its limits' : 'after slippage'})</span>` : '';
       /* A shallow pool moves a lot for a little — say so before the tap,
          not after: the trade is priced with the impact in, and a smaller
          amount keeps more of it. */
-      /* What the network takes to finish the route — the difference between
-         the two SOL routes is mostly this. */
-      /* The cost is stated on every route, every time — in dollars where we
-         have a price, because "0.0052 ETH" means nothing to most people.
-
-         It never says who "covers" it. Whoever fronts the gas transaction,
-         the fee comes out of the conversion and the KOIN figure above is
-         already net of it, so any wording suggesting it is on us is simply
-         untrue to the person reading it. */
+      /* Show expected fees, the accepted ceiling and payment sources. Fees
+         paid from an existing ETH balance are separate from KOIN delivery. */
       const money = r.feeUsd != null
         ? `$${r.feeUsd.toFixed(2)}${r.feePct != null ? ` · ${r.feePct.toFixed(1)}% of this swap` : ''}`
         : `${Number(r.feeEth || 0).toFixed(4)} ETH`;
       const fee = r.feeEth
-        ? `<span class="fund-fee">fees ${esc(money)} — already deducted above</span>`
+        ? `<span class="fund-fee">${r.feeModel === 2 ? 'estimated conversion and Ethereum fees' : 'fees'} ${esc(money)}${r.feeModel === 2 ? ' — maximum ' + (r.maxFeeUsd != null ? '$' + Number(r.maxFeeUsd).toFixed(2) : esc(r.maxFeeEth) + ' ETH') : ' — already deducted above'}</span>`
+        : '';
+      const detail = r.feeModel === 2
+        ? `<details class="fund-fee-details"><summary>Fee limits and payment</summary>` +
+          `<div>Maximum conversion and Ethereum fees: <strong>${r.maxFeeUsd != null ? '$' + Number(r.maxFeeUsd).toFixed(2) : esc(r.maxFeeEth) + ' ETH'}</strong>. A higher cost will pause the route.</div>` +
+          `<div>Network gas budget: ${esc(r.networkMaxEth)} ETH. Platform fee: ${esc(r.platformFeeEth)} ETH.</div>` +
+          `<div>Gas advance / direct sponsorship: up to ${esc(r.sponsorMaxEth)} ETH, repaid once in ETH. Sponsorship risk charge: up to ${esc(r.sponsorshipPremiumMaxEth)} ETH.</div>` +
+          `<div>Available ETH is used first: up to ${esc(r.ownEthMax)} ETH${asset === 'eth' ? ' for gas, in addition to the selected input' : ', including ETH added while the route is running'}. ${r.recoveryInputMax ? 'Up to ' + esc(r.recoveryInputMax) + ' ' + esc(asset.toUpperCase()) + ' is reserved to buy ETH when needed; the remaining tokens convert to KOIN.' : 'The KOIN quote accounts for deductions from the selected input.'}</div>` +
+          `<div>Unused ETH stays at your deposit address. Exchange fees are included in the swap prices.</div>` +
+          (r.solReserve ? `<div>Solana network fees and account deposits are paid separately from the ${esc(r.solReserve)} SOL reserve. Unused funds remain yours.</div>` : '') +
+          `<div>This quote expires ${esc(new Date(r.quoteExpiresAt).toLocaleTimeString())}. The route may pause if prices or gas move beyond its limits.</div></details>`
         : '';
       /* And when it is a big share of a small swap, say it where it cannot be
          missed rather than in grey text under the number. */
@@ -226,23 +235,26 @@ const Fund = (() => {
       const btnLabel = single ? 'Swap & bridge to KOIN' : `Use Route ${esc(r.id)}`;
       return `<div class="fund-route${r.isBest ? ' is-best' : ''}">` +
         `<div class="fund-route-head">${head}` +
-        `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}">${btnLabel}</button></div>` +
+        `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}"${r.quoteId ? ' data-quote="' + esc(r.quoteId) + '"' : ''}>${btnLabel}</button></div>` +
         steps +
-        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}${fee}</div>` + alarm +
+        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}${fee}</div>` + detail + alarm +
         `</div>`;
     }).join('');
   }
 
-  async function startSwap(asset, amount, route, btn) {
+  async function startSwap(asset, amount, route, btn, quoteId) {
     if (BUSY) return;
     BUSY = true; if (btn) btn.disabled = true;
     try {
       say(asset === 'sol' ? 'Starting the swap — the server drives the Solana and Ethereum legs from here…'
         : 'Starting the swap — the server drives the Ethereum side from here…');
-      await CTX.api('/api/fund/start', { credentialId: CTX.credentialId(), asset, amount, route });
+      await CTX.api('/api/fund/start', { credentialId: CTX.credentialId(), asset, amount, route, quoteId });
       say('');
       await refresh();
-    } catch (e) { say(e.message || 'Could not start the swap', 'err'); }
+    } catch (e) {
+      say(e.message || 'Could not start the swap', 'err');
+      if (/quote.*expir|refresh.*quote/i.test(e.message || '')) requote(asset);
+    }
     finally { BUSY = false; if (btn) btn.disabled = false; }
   }
 

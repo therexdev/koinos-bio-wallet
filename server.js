@@ -616,7 +616,7 @@ api.fundStart = async (body, ip) => {
   const account = fundAccount(body.credentialId);
   if (rateLimited('fund-start:addr:' + account, 8, 24 * 3600000)) throw httpError(429, 'that account started several swaps today — come back tomorrow');
   try {
-    return { ok: true, job: await funding.start(account, { asset: String(body.asset || ''), amount: body.amount, route: body.route }) };
+    return { ok: true, job: await funding.start(account, { asset: String(body.asset || ''), amount: body.amount, route: body.route, quoteId: body.quoteId }) };
   } catch (e) { throw httpError(400, e.message); }
 };
 

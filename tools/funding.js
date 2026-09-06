@@ -63,6 +63,8 @@ const { opCompleteTransfer, DEFAULT_REDEEM_RC } = require("./eth/koinos-bridge")
 const koindx = require("./eth/koindx");
 const U = require("./eth/units");
 const fees = require("./eth/fees");
+const gasAccounting = require("./eth/gas-accounting");
+const fundingV2 = require("./eth/funding-v2");
 /* Route S. Its packages are optional at boot: without them the wallet runs
    exactly as before and the rail reports itself off (see solRail). */
 const SC = require("./sol/sol-constants");
@@ -97,6 +99,7 @@ const S = {
   gasMinEth: process.env.ETH_GAS_MIN || "0.0012",
   /* What the platform charges, and where token-denominated fees accrue. */
   fee: fees.config(),
+  gasPolicy: gasAccounting.config(),
   /* Route S */
   maxSol: process.env.FUND_MAX_SOL || "0.5",
   /* Ethereum gas sets the real floor for a Solana deposit — below this the
@@ -120,6 +123,7 @@ const ETH_STATES = new Set([
   "bridge_token", "deposit_eth",
   "wh_redeem", // Routes S and T: take delivery of what Wormhole holds
   "collect_fee", // the conversion fee, in whatever this route is holding
+  "gas_approve_reset", "gas_approve", "gas_buy_eth", "approve_permit2_reset", "request_signatures",
 ]);
 /* States the server drives with the Solana transit key (Routes S and T). */
 const SOL_STATES = new Set(["sol_swap", "sol_bridge", "awaiting_vaa"]);
@@ -153,14 +157,56 @@ function waitsForTap(j) {
 const file = () => path.join(S.dataDir, "funding.json");
 const BUSY = new Set();
 let _timer = null, _ethProvider = null, _solConn = null;
+const STARTING = new Set();
+const ownedLocks = new Set();
+function lockDataDirectory() {
+  if (S.demo) return;
+  const lock = path.join(S.dataDir, "funding-worker.lock");
+  if (ownedLocks.has(lock)) return;
+  try {
+    const fd = fs.openSync(lock, "wx", 0o600);
+    try { fs.writeFileSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+    ownedLocks.add(lock);
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+    const stat = fs.statSync(lock);
+    const pid = Number(fs.readFileSync(lock, "utf8"));
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("The funding worker lock needs operator inspection");
+    let alive = true;
+    try { process.kill(pid, 0); } catch (err) { if (err.code === "ESRCH") alive = false; }
+    if (alive) throw new Error("Another funding worker owns this data directory; run only one wallet process per data directory");
+    if (fs.statSync(lock).ino !== stat.ino) throw new Error("The funding worker lock changed; retry startup");
+    fs.unlinkSync(lock);
+    lockDataDirectory();
+  }
+}
+process.once("exit", () => {
+  for (const lock of ownedLocks) {
+    try { if (fs.readFileSync(lock, "utf8") === String(process.pid)) fs.unlinkSync(lock); } catch (_) {}
+  }
+});
+const v2 = fundingV2.create({ settings: S, provider: ethProvider, transit: (account) => transitFor(account),
+  job: (account) => job(account), save: saveJob, koinosProvider: () => chain.provider(), relayer: relayerAddress,
+  records: () => {
+    const byId = new Map();
+    for (const j of [...Object.values(S.store.history || {}), ...Object.values(S.store.jobs || {})]) {
+      if (j && j.id) byId.set(j.id, j);
+    }
+    return [...byId.values()];
+  },
+});
 
 function configure(opts) {
   Object.assign(S, opts || {});
   fs.mkdirSync(S.dataDir, { recursive: true, mode: 0o700 });
+  lockDataDirectory();
   try {
     S.store = JSON.parse(fs.readFileSync(file(), "utf8"));
-    S.store.transit ||= {}; S.store.jobs ||= {};
-  } catch (_) { S.store = { transit: {}, jobs: {} }; }
+    S.store.transit ||= {}; S.store.jobs ||= {}; S.store.history ||= {};
+  } catch (e) {
+    if (e.code !== "ENOENT") throw new Error("The funding ledger could not be read; refusing to replace it with an empty ledger");
+    S.store = { transit: {}, jobs: {}, history: {} };
+  }
   if (!S.demo) repairSimulatedJobs();
   probeSdk().catch(() => {});
   if (!_timer) {
@@ -208,8 +254,12 @@ function repairSimulatedJobs() {
 
 function persist() {
   const tmp = file() + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(S.store, null, 1), { mode: 0o600 });
+  const fd = fs.openSync(tmp, "w", 0o600);
+  try { fs.writeFileSync(fd, JSON.stringify(S.store, null, 1)); fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
   fs.renameSync(tmp, file());
+  const directory = fs.openSync(S.dataDir, "r");
+  try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
 }
 
 /* ---------------- transit addresses ---------------- */
@@ -272,8 +322,8 @@ const gasSpent = (r) => BigInt(r.gasUsed || 0) * BigInt(r.gasPrice || r.effectiv
 /** Ether fees go back to the sponsor, because that is the float they refill.
     Token fees accrue wherever FUND_FEE_TREASURY points, or the sponsor. */
 function feeRecipient() {
-  if (S.fee.treasury) return S.fee.treasury;
   if (S.gasSponsorKey) return new ethers.Wallet(S.gasSponsorKey).address;
+  if (S.fee.treasury) return S.fee.treasury;
   return null;
 }
 
@@ -296,20 +346,10 @@ async function redeemerFor(account, route) {
   const units = route === "S" ? WH_REDEEM_GAS_UNITS + VORTEX_TAIL_GAS_UNITS : WH_REDEEM_GAS_UNITS;
   const need = await gasCostWei(units);
 
-  if (S.gasSponsorKey) {
-    const sponsor = new ethers.Wallet(S.gasSponsorKey, wallet.provider);
-    let have;
-    try { have = await wallet.provider.getBalance(sponsor.address); }
-    catch (_) { return { wallet: sponsor, sponsored: true }; } // unreadable: assume it can, rather than block on a bad node
-    if (have >= need) return { wallet: sponsor, sponsored: true };
-    /* Too poor to sponsor. Fall through: the deposit address may hold its
-       own ether, and if it does not, the caller says so in plain words. */
-  }
-  /* Nobody is sponsoring, so the transit address pays. */
-  const floor = ethers.parseEther(S.gasMinEth);
-  const want = need > floor ? need : floor;
+  // Legacy jobs may finish with their own ETH. New sponsorship is admitted
+  // only through the accepted v2 plan and its durable ETH recovery ledger.
   const own = await wallet.provider.getBalance(wallet.address);
-  if (own >= want) return { wallet, sponsored: false, needWei: want.toString() };
+  if (own >= need) return { wallet, sponsored: false, needWei: need.toString() };
   return null;
 }
 
@@ -378,7 +418,9 @@ async function balances(account) {
    builders in tools/eth. Route C from an ETH deposit is the long one:
    swap ETH→USDT, approve Permit2, approve the router, swap USDT→vKOIN,
    approve the bridge, transfer to the bridge. */
-const ROUTE_GAS_UNITS = 900000n;
+// Includes fee transfer, a possible USDT allowance reset and one signature
+// renewal; Max must leave enough ETH for the new accepted route budget.
+const ROUTE_GAS_UNITS = 1016000n;
 
 /** What to hold back for gas, priced from the CURRENT fee — not a fixed
     amount. A flat reserve is wrong in both directions: it strands a job
@@ -409,7 +451,9 @@ async function gasReserveWei() {
     const fee = await feeData();
     const perGas = fee.maxFeePerGas ?? fee.gasPrice ?? 0n;
     if (perGas > 0n) {
-      const est = (perGas * ROUTE_GAS_UNITS * 15n) / 10n; // 50% headroom
+      const gas = ROUTE_GAS_UNITS + gasAccounting.bps(ROUTE_GAS_UNITS, S.gasPolicy.gasHeadroomBps);
+      const price = perGas + gasAccounting.bps(perGas, S.gasPolicy.priceHeadroomBps);
+      const est = gas * price;
       return est > floor ? est : floor;
     }
   } catch (_) { /* fee read failed — fall back to the configured floor */ }
@@ -472,6 +516,7 @@ function parseAmount(asset, amount) {
 /** Route comparison for a SPECIFIC amount of one asset — the node app's
     "how much would I get, which way" view. */
 async function quoteFor(account, asset, amount) {
+  if (!FUNDABLE.includes(asset)) throw new Error("asset must be eth, usdc, usdt or sol");
   const bal = await balances(account);
   if (!bal) throw new Error("Funding is not enabled for this account");
   if (asset === "sol") {
@@ -488,146 +533,9 @@ async function quoteFor(account, asset, amount) {
   if (asset === "sol" && amt < SU.parseSol(S.minSol)) throw new Error(`Minimum is ${S.minSol} SOL`);
   if (S.demo) return demoQuoteFor(asset, amt, spendable);
 
-  if (asset === "sol") return quoteSol(account, amt);
-
-  if (asset === "eth") {
-    const p = await ethProvider();
-    const amountEth = ethers.formatEther(amt);
-    const qs = [];
-    try {
-      const c = await ethSwap.quoteEthToVkoin({ amountEth, slippageBps: S.slippageBps, provider: p });
-      qs.push({ ...routes.descriptor("C"), koinOut: c.koinOut, koinOutMin: c.koinOutMin });
-    } catch (e) { qs.push({ ...routes.descriptor("C"), koinOut: null, error: String(e.message || e) }); }
-    try {
-      const veth = weiToVethSats(amt).sats;
-      const b = await koindx.quoteSwap({ amountInSats: veth, slippageBps: S.slippageBps, network: S.network, provider: chain.provider() });
-      qs.push({ ...routes.descriptor("B"), koinOut: b.amountOut, koinOutMin: b.amountOutMin });
-    } catch (e) { qs.push({ ...routes.descriptor("B"), koinOut: null, error: String(e.message || e) }); }
-    return { asset, amount: amountEth, ...routes.compareRoutes(qs) };
-  }
-
-  const p = await ethProvider();
-  let q;
-  if (asset === "usdc") q = await ethSwap.quoteUsdcToVkoin({ usdcSats: amt, slippageBps: S.slippageBps, provider: p });
-  else {
-    const koin = await ethSwap.quoteVkoinOut({ usdtSats: amt, provider: p });
-    q = { koinOut: koin.toString(), koinOutMin: ethSwap.applySlippage(koin, S.slippageBps).toString() };
-  }
-  const line = { ...routes.descriptor("C"), koinOut: q.koinOut, koinOutMin: q.koinOutMin };
-  return { asset, amount: asset === "usdc" ? U.formatUsdc(amt) : U.formatUsdt(amt), ...routes.compareRoutes([line]) };
+  return v2.quote(account, asset, amt);
 }
 
-/** Both SOL routes, priced on what actually LANDS.
-
-    Every Ethereum fee the conversion causes is charged against the quote,
-    whichever side of the platform pays it: route T's own legs come out of
-    the ether it brings, and route S's come out of the sponsor's pocket. A
-    route that cannot pay its own way is not made to look cheaper by leaving
-    that cost out of the comparison — which is exactly the mistake that would
-    send every small deposit down the expensive path. */
-async function quoteSol(account, amt) {
-  const p = await ethProvider();
-  /* A quote asked for on every keystroke cannot be a queue. Nothing below
-     needs anything else below it, so the whole prelude is one round trip
-     deep: the three gas prices share a single cached fee read, and Jupiter
-     is asked about both routes at once instead of route S waiting to learn
-     what route T's first leg fetched. Settled rather than raced, so one
-     Solana hiccup still leaves the other route quotable. */
-  const settle = (pr) => pr.then((q) => ({ q, err: null }), (err) => ({ q: null, err }));
-  const [reserveWei, redeemWei, vortexWei, redeemerT, redeemerS, wethQuote, vkoinQuote] = await Promise.all([
-    gasReserveWei(), gasCostWei(WH_REDEEM_GAS_UNITS), gasCostWei(VORTEX_TAIL_GAS_UNITS),
-    redeemerFor(account, "T"), redeemerFor(account, "S"),
-    settle(jup.quote({ amount: amt, slippageBps: S.slippageBps, outputMint: SC.WETH_SOL_MINT })),
-    settle(jup.quote({ amount: amt, slippageBps: S.slippageBps })),
-  ]);
-  const noRedeemer = (r) => `the Ethereum side needs gas — set ETH_GAS_SPONSOR_KEY on the server, or send about ${r && r.needWei ? short(ethers.formatEther(r.needWei)) : S.gasMinEth} ETH to your Ethereum deposit address`;
-  /* What the gas is worth in KOIN, so it can be taken off a quote. */
-  const gasKoin = async (wei) => {
-    if (wei <= 0n) return 0n;
-    try { return BigInt((await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(wei), slippageBps: 0, provider: p })).koinOut); }
-    catch (_) { return 0n; }
-  };
-  /* What this much SOL is worth in ether: route T's first leg, which both
-     routes share, because both are converting the same SOL and that is the
-     value the percentage fee is taken against either way. */
-  const solValueWei = wethQuote.q ? wormholeUnitsToWei(wethQuote.q.outAmount) : 0n;
-  /* A quote that the fees have eaten is not a quote. Never let a subtraction
-     surface as a negative amount, or as a floor above the amount itself. */
-  const afterFee = (gross, floor, fee) => {
-    const net = BigInt(gross) - fee;
-    if (net <= 0n) {
-      throw new Error(`the Ethereum gas to finish this route costs more than the ${U.formatVkoin(gross)} KOIN it would buy — convert a larger amount at once`);
-    }
-    /* A floor is only worth showing when it is one. Anything that is not
-       below the expected amount is not a guarantee, so say nothing rather
-       than print a number the route cannot stand behind. */
-    const min = BigInt(floor || 0) - fee;
-    return { koinOut: net.toString(), koinOutMin: min > 0n && min < net ? min.toString() : undefined };
-  };
-
-  /* What remains is each route's own Ethereum pricing, and those run
-     concurrently too: route T's two quoter calls no longer sit in front of
-     route S's. Each catches into an unpriceable line, so a route that cannot
-     be quoted says why instead of taking the other one down with it. */
-
-  /* Route T — buys ether, so the deposit pays for its own Ethereum legs and
-     the vKOIN comes from the deep Uniswap pool. */
-  const routeT = (async () => {
-    if (!redeemerT) throw new Error(noRedeemer(null));
-    if (wethQuote.err) throw wethQuote.err;
-    const j = wethQuote.q;
-    const arrivedWei = solValueWei;
-    if (arrivedWei <= reserveWei) {
-      throw new Error(`this much SOL buys about ${short(ethers.formatEther(arrivedWei))} ETH, and the Ethereum swaps need about ${short(ethers.formatEther(reserveWei))} ETH of gas — convert more at once`);
-    }
-    /* The platform fee comes out of the ether too, before anything is
-       swapped, so the quote must be priced on what is actually left. */
-    const platformWei = fees.feeWei({ sponsorWei: redeemerT.sponsored ? redeemWei : 0n, valueWei: arrivedWei, cfg: S.fee }).fee;
-    if (arrivedWei <= reserveWei + platformWei) {
-      throw new Error(`this much SOL buys about ${short(ethers.formatEther(arrivedWei))} ETH, and the gas and fee come to about ${short(ethers.formatEther(reserveWei + platformWei))} ETH — convert more at once`);
-    }
-    const spendWei = arrivedWei - reserveWei - platformWei;
-    const c = await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(spendWei), slippageBps: S.slippageBps, provider: p });
-    /* The floor has to assume the WORST fill on Solana, not the expected
-       one: Jupiter's own min-out is what the swap enforces on chain, and
-       everything downstream starts from whatever actually arrives. Pricing
-       the tail on the expected fill would print a "minimum" the route can
-       land under. */
-    const minArrivedWei = wormholeUnitsToWei(j.outAmountMin);
-    const cMin = minArrivedWei > reserveWei + platformWei
-      ? await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(minArrivedWei - reserveWei - platformWei), slippageBps: S.slippageBps, provider: p })
-      : { koinOutMin: "0" };
-    /* Both figures are already net of the gas and the fee. */
-    return attachFee({
-      ...routes.descriptor("T"),
-      ...afterFee(c.koinOut, cMin.koinOutMin, 0n),
-      priceImpactPct: j.priceImpactPct, via: j.via,
-      ethBought: ethers.formatEther(arrivedWei),
-    }, { p, valueWei: arrivedWei, gasWei: reserveWei, sponsoredWei: redeemerT.sponsored ? redeemWei : 0n });
-  })().catch((e) => ({ ...routes.descriptor("T"), koinOut: null, error: String(e.message || e) }));
-
-  /* Route S — buys vKOIN straight from the small Solana pool. Nothing it
-     brings can pay for Ethereum, so the platform funds the whole tail. */
-  const routeS = (async () => {
-    if (!redeemerS) throw new Error(noRedeemer(redeemerT));
-    if (vkoinQuote.err) throw vkoinQuote.err;
-    const j = vkoinQuote.q;
-    /* Route S never holds ether, so everything on the Ethereum side is
-       borrowed from the float — which is what the per-job limit is for. */
-    const borrowed = redeemerS.sponsored ? redeemWei + vortexWei : 0n;
-    /* Its fee is taken in vKOIN, so it comes off the KOIN that lands. */
-    const platformWei = fees.feeWei({ sponsorWei: borrowed, valueWei: solValueWei, cfg: S.fee }).fee;
-    const fee = await gasKoin(platformWei + (redeemerS.sponsored ? 0n : redeemWei + vortexWei));
-    return attachFee({
-      ...routes.descriptor("S"),
-      ...afterFee(j.outAmount, j.outAmountMin, fee),
-      priceImpactPct: j.priceImpactPct, via: j.via,
-    }, { p, valueWei: solValueWei, gasWei: redeemerS.sponsored ? 0n : redeemWei + vortexWei, sponsoredWei: borrowed });
-  })().catch((e) => ({ ...routes.descriptor("S"), koinOut: null, error: String(e.message || e) }));
-
-  const qs = await Promise.all([routeT, routeS]);
-  return { asset: "sol", amount: SU.formatSol(amt), ...routes.compareRoutes(qs) };
-}
 const short = (s) => String(s).slice(0, 9);
 
 /* What each asset's SPENDABLE balance would yield, per route — the card's
@@ -658,6 +566,8 @@ function saveJob(account, j) {
      constantly while getting nowhere, and telling those apart is the whole
      point of `statusAt`. */
   const prev = S.store.jobs[account];
+  S.store.history ||= {};
+  if (prev && prev.id) S.store.history[prev.id] = { ...prev, account };
   const moved = !prev || prev.status !== (j && j.status);
   S.store.jobs[account] = j
     ? {
@@ -670,6 +580,7 @@ function saveJob(account, j) {
       }
     : null;
   if (!j) delete S.store.jobs[account];
+  if (S.store.jobs[account]?.id) S.store.history[S.store.jobs[account].id] = { ...S.store.jobs[account], account };
   persist();
 }
 
@@ -698,9 +609,12 @@ function stallOf(j) {
 
 function publicJob(j) {
   if (!j) return null;
-  const { record, vaa, ...rest } = j;
+  const { record, vaa, pendingEth, confirmedEth, ethReceipts, feePlan, pendingSolRaw, ...rest } = j;
   return {
     ...rest,
+    ...(feePlan ? { feeModel: feePlan.version, estimatedFeeEth: ethers.formatEther(feePlan.estimatedFeeWei),
+      maximumFeeEth: ethers.formatEther(feePlan.maxFeeWei), sponsorDebtEth: ethers.formatEther(gasAccounting.costs(j).debt),
+      actualEthereumGasEth: ethers.formatEther(Object.values(ethReceipts || {}).reduce((a, r) => a + BigInt(r.gasWei), 0n)) } : {}),
     recordAmount: record ? String(record.amount) : undefined,
     stalled: stallOf(j) || undefined,
   };
@@ -708,7 +622,13 @@ function publicJob(j) {
 
 /** Start a swap of `amount` (default: everything spendable) of `asset`,
     through `route` for ETH ("B"|"C"; default: whichever quotes best). */
-async function start(account, { asset, amount, route } = {}) {
+async function start(account, args = {}) {
+  if (STARTING.has(account)) throw new Error("A conversion is already starting");
+  STARTING.add(account);
+  try { return await startUnlocked(account, args); }
+  finally { STARTING.delete(account); }
+}
+async function startUnlocked(account, { asset, amount, route, quoteId } = {}) {
   const cur = job(account);
   if (cur && !TERMINAL.has(cur.status)) throw new Error("A swap is already in progress");
   const t = transitFor(account);
@@ -737,107 +657,7 @@ async function start(account, { asset, amount, route } = {}) {
   const p = await ethProvider();
   if (await bridgePaused(p, S.network)) throw new Error("The Vortex bridge is currently paused");
   BAL_CACHE.delete(account);
-  const common = {
-    asset, slippageBps: S.slippageBps, koinosRecipient: account,
-    ethFrom: t.ethAddress, pendingTx: null, startedAt: Date.now(), taps: 0,
-  };
-
-  if (asset === "sol") {
-    const amountSol = SU.formatSol(amt);
-    const q = await quoteFor(account, "sol", amountSol);
-    let chosen = null;
-    if (route === "S" || route === "T") {
-      chosen = (q.routes || []).find((r) => r.id === route && r.koinOut != null);
-      if (!chosen) {
-        const why = (q.routes || []).find((r) => r.id === route);
-        throw new Error(`Route ${route} can't be used right now` + (why && why.error ? ` — ${why.error}` : ""));
-      }
-    } else {
-      chosen = q.best;
-      if (!chosen) {
-        const why = (q.routes || []).map((r) => r.error).filter(Boolean)[0];
-        throw new Error(why ? `SOL can't be converted right now — ${why}` : "No SOL route can be quoted right now — try again in a minute");
-      }
-    }
-    /* The float will not lend more than FUND_FEE_MAX_SPONSORED_USD to one
-       conversion — past that the deposit address has to hold its own ether,
-       or a single job could take a bite out of the float nothing repays. */
-    if (chosen.sponsorRefused) {
-      throw new Error(`Ethereum gas for this one comes to about $${chosen.feeUsd} — more than we front for a single conversion. Send about ${S.gasMinEth} ETH to your Ethereum deposit address and it will run from there.`);
-    }
-    /* Both routes end on Ethereum and the first Ethereum step happens before
-       the deposit has any ether of its own. Establish now that somebody can
-       pay for it, rather than after the SOL has already been swapped. */
-    if (!(await redeemerFor(account, chosen.id))) {
-      throw new Error(`This route finishes on Ethereum, and the Wormhole redeem needs gas — send about ${S.gasMinEth} ETH to your Ethereum deposit address first`);
-    }
-    saveJob(account, {
-      ...common, route: chosen.id, status: "sol_swap",
-      solFrom: t.solAddress, amountSol, solLamports: amt.toString(),
-      amountLabel: amountSol + " SOL", estKoinOut: chosen.koinOut,
-      priceImpactPct: chosen.priceImpactPct == null ? undefined : chosen.priceImpactPct,
-      estFeeEth: chosen.feeEth,
-      solTokenBefore: (chosen.id === "T" ? bal.solWethSats : bal.solVkoinSats) || "0",
-    });
-    return publicJob(job(account));
-  }
-
-  if (asset === "eth") {
-    const amountEth = ethers.formatEther(amt);
-    const q = await quoteFor(account, asset, amountEth);
-    let chosen = null;
-    if (route === "B" || route === "C") {
-      chosen = (q.routes || []).find((r) => r.id === route && r.koinOut != null);
-      if (!chosen) throw new Error(`Route ${route} can't be quoted right now` );
-    } else {
-      chosen = q.best;
-      if (!chosen) throw new Error("No route can be quoted right now — try again in a minute");
-    }
-    if (chosen.id === "C") {
-      const usdtBefore = (await swap.balanceOf(p, RC.USDT, t.ethAddress)).toString();
-      /* An ETH deposit holds ether from the start, so its fee comes out of
-         that — one transfer, straight back into the sponsor float. */
-      const priced = await priceFee({ ...common, route: "C" }, { p, value: amt, token: "eth", next: "swap_eth_usdt" });
-      const net = amt - BigInt(priced.feeAmount || 0);
-      saveJob(account, {
-        ...priced,
-        amountEth: ethers.formatEther(net), amountWei: net.toString(),
-        amountLabel: amountEth + " ETH",
-        usdtBefore, estKoinOut: chosen.koinOut,
-      });
-    } else {
-      saveJob(account, {
-        ...common, route: "B", status: "deposit_eth",
-        amountEth, amountWei: amt.toString(),
-        amountLabel: amountEth + " ETH",
-        estKoinOut: chosen.koinOut,
-      });
-    }
-    return publicJob(job(account));
-  }
-
-  /* Stables — Route C tail. Gas must exist (or be frontable). */
-  const needGas = ethers.parseEther(S.gasMinEth);
-  const haveGas = BigInt(bal.ethWei);
-  let status = asset === "usdc" ? "approve_v3_usdc" : "approve_permit2";
-  if (haveGas < needGas) {
-    if (!S.gasSponsorKey) {
-      throw new Error(`The deposit address needs ~${S.gasMinEth} ETH for Ethereum gas — send a little ETH along with your ${asset.toUpperCase()}`);
-    }
-    status = "front_gas";
-  }
-  const label = asset === "usdc" ? U.formatUsdc(amt) : U.formatUsdt(amt);
-  const base = {
-    ...common, route: "C", status,
-    [asset + "Sats"]: amt.toString(),
-    amountLabel: label + " " + asset.toUpperCase(),
-    afterGas: status === "front_gas" ? (asset === "usdc" ? "approve_v3_usdc" : "approve_permit2") : undefined,
-  };
-  if (asset === "usdt") base.usdtSats = amt.toString();
-  const est = await quoteFor(account, asset, label).catch(() => null);
-  if (est && est.best && est.best.koinOut) base.estKoinOut = est.best.koinOut;
-  saveJob(account, base);
-  return publicJob(job(account));
+  return publicJob(await v2.start(account, { asset, amount: amt, route, quoteId }, bal));
 }
 
 /** Where is this job REALLY up to?
@@ -945,6 +765,7 @@ const IDEMPOTENT_STEPS = new Set(["wh_redeem", "awaiting_redeem", "bridge_token"
 
 async function resume(account) {
   const j = job(account);
+  if (j?.feePlan?.version === 2) return publicJob(await v2.resume(account));
   /* Retry is for a job that has failed OR one that has stopped moving. The
      second case is the one that matters: a step looping on a transient
      error, or waiting on a transaction that will never be mined, never
@@ -1001,6 +822,14 @@ async function resume(account) {
 function reset(account) {
   const j = job(account);
   if (j && !TERMINAL.has(j.status)) throw new Error("A swap is still in progress");
+  if (j?.feePlan?.version === 2 && (j.pendingEth || j.confirmedEth || gasAccounting.costs(j).debt > 0n
+      || (j.status !== "done" && (Object.keys(j.ethReceipts || {}).length || j.solSwapSig || j.pendingSig)))) {
+    throw new Error("This conversion still has transactions or repayment to reconcile. Retry it instead of resetting its history.");
+  }
+  if (j?.feePlan?.version === 2) saveJob(account, { ...j, reservationReleased: true });
+  if (j && !j.feePlan && sponsorSpent(j) > 0n && !j.feePaidWei && !j.feePaidUnits) {
+    throw new Error("This older conversion has unreconciled gas funding; its history must be reviewed before it can be reset");
+  }
   saveJob(account, null);
   return { ok: true };
 }
@@ -1052,6 +881,9 @@ async function tick() {
     carry on; the user never sees a failure that wasn't one. */
 const MAX_RECOVERIES = 3;
 async function failOrRecover(account, j, msg) {
+  if (j.feePlan?.version === 2) {
+    return saveJob(account, { ...job(account), status: "error", error: msg, failedAt: j.status });
+  }
   if (!S.demo && (j.recoveries || 0) < MAX_RECOVERIES) {
     try {
       const at = await reconcile(account, j);
@@ -1080,6 +912,7 @@ async function receipt(hash) {
 }
 
 async function advanceEth(account, j) {
+  if (j.feePlan?.version === 2) return v2.advance(account, j);
   const wallet = await transitWallet(account);
   const p = wallet.provider;
   if (j.pendingTx) {
@@ -1090,9 +923,10 @@ async function advanceEth(account, j) {
   const now = Math.floor(Date.now() / 1000);
   switch (j.status) {
     case "front_gas": {
-      const sponsor = new ethers.Wallet(S.gasSponsorKey, p);
-      const sent = await sponsor.sendTransaction({ to: j.ethFrom, value: ethers.parseEther(S.gasTopupEth) });
-      return saveJob(account, { ...j, pendingTx: sent.hash });
+      if (BigInt(await p.getBalance(wallet.address)) >= await gasCostWei(j.route === "S" ? VORTEX_TAIL_GAS_UNITS + 60000n : ROUTE_GAS_UNITS)) {
+        return saveJob(account, { ...j, status: j.afterGas, afterGas: undefined });
+      }
+      throw new Error("This older conversion needs gas. New sponsorship requires an approved ETH recovery plan; add your own ETH or ask the operator to reconcile this job.");
     }
     case "approve_v3_usdc": {
       const cur = await swap.allowance(p, RC.USDC, wallet.address, RC.V3_SWAP_ROUTER);
@@ -1189,8 +1023,8 @@ async function advanceEth(account, j) {
         const have = await p.getBalance(wallet.address);
         const reserve = await gasReserveWei();
         /* Never let the fee eat the gas the rest of the route still needs. */
-        const send = have > reserve + amount ? amount : (have > reserve ? have - reserve : 0n);
-        if (send <= 0n) return saveJob(account, { ...j, status: j.afterFee, afterFee: undefined, feeSkipped: "not enough ether left" });
+        if (have < reserve + amount) throw new Error("The complete legacy fee and remaining gas must be funded before this conversion continues");
+        const send = amount;
         const sent = await wallet.sendTransaction({ to, value: send });
         return saveJob(account, { ...j, pendingTx: sent.hash, feePaidWei: send.toString() });
       }
@@ -1198,8 +1032,8 @@ async function advanceEth(account, j) {
          uses, transferred to the treasury. */
       const token = j.feeToken === "usdt" ? RC.USDT : RC.VKOIN;
       const held = await swap.balanceOf(p, token, wallet.address);
-      const send = amount < held ? amount : held;
-      if (send <= 0n) return saveJob(account, { ...j, status: j.afterFee, afterFee: undefined, feeSkipped: "nothing to take it from" });
+      if (held < amount) throw new Error("The complete legacy fee is not available; this job needs reconciliation");
+      const send = amount;
       const { hash } = await swap.sendTx(wallet, swap.buildTransferTx(token, to, send));
       return saveJob(account, { ...j, pendingTx: hash, feePaidUnits: send.toString() });
     }
@@ -1253,8 +1087,13 @@ async function onEthConfirmed(account, j, r) {
   switch (j.status) {
     case "front_gas": {
       /* The top-up left the sponsor's pocket, and so did its gas. */
-      const spent = ethers.parseEther(S.gasTopupEth) + gasSpent(r);
-      return saveJob(account, { ...addSponsorSpend(base, spent), status: j.afterGas, afterGas: undefined });
+      const sent = await p.getTransaction(confirmedHash);
+      if (!sent || sent.value == null) throw new Error("Cannot read the original gas advance; refusing to guess from changed configuration");
+      const spent = BigInt(sent.value) + gasSpent(r);
+      const next = { ...addSponsorSpend(base, spent), status: j.afterGas, afterGas: undefined };
+      if (j.asset === "usdt" && !j.feePaidUnits) return saveJob(account, await priceFee(next, { p, value: j.usdtSats, token: "usdt", next: j.afterGas }));
+      if (j.route === "S" && j.vkoinSats && !j.feePaidUnits) return saveJob(account, await priceFee(next, { p, value: j.vkoinSats, token: "vkoin", next: j.afterGas }));
+      return saveJob(account, next);
     }
     case "approve_v3_usdc":
       return saveJob(account, { ...base, status: "swap_usdc_usdt" });
@@ -1266,7 +1105,7 @@ async function onEthConfirmed(account, j, r) {
       /* A stablecoin deposit never holds ether of its own, so its fee is taken
          here, in the USDT it is carrying, and swapped back to ether in a batch
          when that is worth the gas. An ETH deposit already paid at the start. */
-      if (j.asset === "eth") return saveJob(account, withUsdt);
+      if (j.asset === "eth" || j.route === "T") return saveJob(account, withUsdt);
       return saveJob(account, await priceFee(withUsdt, { p, value: got, token: "usdt", next: "approve_permit2" }));
     }
     case "approve_permit2":
@@ -1339,22 +1178,34 @@ async function advanceSol(account, j) {
        and let the step run again — every step re-reads the chain first, so
        a transaction the node merely lost track of is not sent twice. */
     if (j.pendingSigExpiry && (await sol.blockHeight(c)) > Number(j.pendingSigExpiry)) {
-      return saveJob(account, { ...j, pendingSig: null, pendingSigExpiry: null, resends: (j.resends || 0) + 1 });
+      return saveJob(account, { ...j, pendingSig: null, pendingSolRaw: null, pendingSigExpiry: null, resends: (j.resends || 0) + 1 });
     }
+    if (j.pendingSolRaw) await sol.sendRaw(c, Buffer.from(j.pendingSolRaw, "base64"));
     return;
   }
   switch (j.status) {
     case "sol_swap": {
+      if (j.feePlan?.version === 2) await v2.assertCapacity(j);
       /* On-chain truth first: a balance above the starting one means an
          earlier send landed after all. */
       const have = await sol.tokenBalance(c, mint, t.solAddress);
-      if (have > solTokenBefore(j)) return saveJob(account, { ...j, status: "sol_bridge", solTokenSats: have.toString() });
+      if (have > solTokenBefore(j)) return saveJob(account, { ...j, status: "sol_bridge", solTokenSats: (have - solTokenBefore(j)).toString() });
       /* A swap that confirmed once is never sent again, whatever a lagging
          node says about the balance — the deposit must not be swapped twice. */
       if (j.solSwapSig) throw new Error(`The SOL → ${bought} swap already went through — waiting for it to show at the deposit address`);
       if ((j.resends || 0) > 3) throw new Error(`The SOL → ${bought} swap keeps expiring before it confirms — Retry when Solana is less busy`);
       const q = await jup.quote({ amount: j.solLamports, slippageBps: j.slippageBps, outputMint: mint });
+      if (j.feePlan?.version === 2 && BigInt(q.outAmountMin) < BigInt(j.feePlan.minSolOutput)) {
+        throw new Error("The SOL price moved below the accepted route minimum; no SOL was sent. Wait and Retry.");
+      }
       const tx = await jup.swapTx({ quote: q, userPublicKey: t.solAddress });
+      if (j.feePlan?.version === 2) {
+        const signed = require("./sol/solana-lite").signSerialized(tx.swapTransaction, t.solSecret);
+        saveJob(account, { ...j, pendingSig: signed.signature, pendingSolRaw: signed.raw.toString("base64"),
+          pendingSigExpiry: tx.lastValidBlockHeight, minTokenOut: q.outAmountMin, solTokenBefore: have.toString() });
+        await sol.sendRaw(c, signed.raw);
+        return;
+      }
       const sig = await sol.signAndSend(c, t.solSecret, tx.swapTransaction);
       return saveJob(account, { ...j, pendingSig: sig, pendingSigExpiry: tx.lastValidBlockHeight, minTokenOut: q.outAmountMin, solTokenBefore: have.toString() });
     }
@@ -1370,7 +1221,16 @@ async function advanceSol(account, j) {
           ? `${bought} is at the Solana deposit address but not in the token account the bridge spends from — it needs consolidating by hand`
           : `No ${bought} at the Solana deposit address to bridge`);
       }
-      const built = await wormhole.buildTransfer({ rpcUrl: c.rpcEndpoint, secret: t.solSecret, mint, amountSats: have, ethRecipient: t.ethAddress });
+      const amount = j.feePlan?.version === 2 ? BigInt(j.solTokenSats) : have;
+      if (amount <= 0n || have < amount) throw new Error("The Solana token account does not hold this job's authorized amount");
+      const built = await wormhole.buildTransfer({ rpcUrl: c.rpcEndpoint, secret: t.solSecret, mint, amountSats: amount, ethRecipient: t.ethAddress });
+      if (j.feePlan?.version === 2) {
+        saveJob(account, { ...j, pendingSig: built.signature, pendingSolRaw: built.raw.toString("base64"),
+          pendingSigExpiry: built.lastValidBlockHeight, solTokenSats: amount.toString(),
+          solTokenElsewhere: total > amount ? (total - amount).toString() : undefined });
+        await sol.sendRaw(c, built.raw);
+        return;
+      }
       await sol.sendRaw(c, built.raw);
       return saveJob(account, {
         ...j, pendingSig: built.signature, pendingSigExpiry: built.lastValidBlockHeight, solTokenSats: have.toString(),
@@ -1405,7 +1265,7 @@ async function onSolConfirmed(account, j) {
   const c = await solConn();
   const sig = j.pendingSig;
   const mint = railMint(j);
-  const base = { ...j, pendingSig: null, pendingSigExpiry: null };
+  const base = { ...j, pendingSig: null, pendingSigExpiry: null, pendingSolRaw: null };
   switch (j.status) {
     case "sol_swap": {
       let got = await sol.deliveredByTx(c, sig, mint, t.solAddress);
@@ -1428,37 +1288,29 @@ async function feeInToken(p, kind, feeWei) {
   throw new Error(`no price for a ${kind} fee`);
 }
 
-/** How the sponsor float is doing: what it holds, what it needs to hold, and
-    how many worst-case jobs that covers. The requirement is the sweep
-    threshold discounted by the buffer, plus whatever could be in flight — see
-    floatPlan in tools/eth/fees.js. Reported so nobody has to guess when to
-    top it up, or by how much. */
-let _float = { at: 0, v: null };
+/** Confirmed ETH, outstanding loans and unspent commitments. Token balances
+    are never counted as spendable gas or as a promised future repayment. */
 async function floatHealth() {
   if (!S.gasSponsorKey) return { sponsored: false };
-  if (_float.v && Date.now() - _float.at < 60000) return _float.v;
   const p = await ethProvider();
   const wallet = new ethers.Wallet(S.gasSponsorKey, p);
-  const [balance, swapCost, routeCost, rate] = await Promise.all([
-    p.getBalance(wallet.address), gasCostWei(150000n),
-    /* The worst case a single job can borrow: route S's whole Ethereum
-       tail, since it arrives holding no ether of its own. */
-    gasCostWei(WH_REDEEM_GAS_UNITS + VORTEX_TAIL_GAS_UNITS),
-    ethUsd(p),
-  ]);
-  /* The most one job may borrow, expressed in ether at today's price. */
-  const maxJobWei = rate > 0 ? ethers.parseEther((S.fee.maxSponsoredUsd / rate).toFixed(18)) : 0n;
-  const plan = fees.floatPlan({ swapCostWei: swapCost, maxSponsoredWei: maxJobWei, routeCostWei: routeCost, cfg: S.fee });
-  const usd = (w) => (rate > 0 ? Number((Number(ethers.formatEther(w)) * rate).toFixed(2)) : undefined);
-  const out = {
-    sponsored: true, address: wallet.address,
+  const [balance, rate] = await Promise.all([p.getBalance(wallet.address, "latest"), ethUsd(p)]);
+  const byId = new Map();
+  for (const j of [...Object.values(S.store.history || {}), ...Object.values(S.store.jobs)]) {
+    if (j?.id) byId.set(j.id, j);
+  }
+  const x = gasAccounting.exposure([...byId.values()]);
+  const floor = BigInt(S.gasPolicy.floorWei), required = floor + x.unspent;
+  const usd = (w) => rate > 0 ? Number((Number(ethers.formatEther(w)) * rate).toFixed(2)) : undefined;
+  return {
+    sponsored: true, address: wallet.address, recoveryMode: "per-job-eth",
     balanceEth: ethers.formatEther(balance), balanceUsd: usd(balance),
-    requiredEth: ethers.formatEther(plan.requiredWei), requiredUsd: usd(plan.requiredWei),
-    jobsBeforeSweep: plan.jobsBeforeSweep,
-    healthy: balance >= plan.requiredWei,
+    requiredEth: ethers.formatEther(required), requiredUsd: usd(required),
+    protectedReserveEth: ethers.formatEther(floor), committedEth: ethers.formatEther(x.unspent),
+    outstandingDebtEth: ethers.formatEther(x.debt),
+    availableToSponsorEth: ethers.formatEther(gasAccounting.shortfall(balance, required)),
+    healthy: balance >= required && x.total < BigInt(S.gasPolicy.maxOutstandingWei),
   };
-  _float = { at: Date.now(), v: out };
-  return out;
 }
 
 /** Ether in dollars, from the same Uniswap pool the routes trade through.
@@ -1474,28 +1326,6 @@ async function ethUsd(p) {
   return _ethUsd.v;
 }
 
-/** Everything a person should be told about what a conversion costs, and
-    whether the float is willing to fund it.
-
-    `gasWei` is the ether the route holds back for its own transactions;
-    `sponsoredWei` is what the platform would have to lend, which is a
-    separate question from what the user pays. */
-async function attachFee(line, { p, valueWei, gasWei = 0n, sponsoredWei = 0n }) {
-  const { fee: platform } = fees.feeWei({ sponsorWei: sponsoredWei, valueWei, cfg: S.fee });
-  const total = BigInt(gasWei) + platform;
-  const rate = await ethUsd(p);
-  const usd = (w) => (rate > 0 ? Number(ethers.formatEther(w)) * rate : 0);
-  const a = fees.assess({ feeUsd: usd(total), valueUsd: usd(valueWei), sponsoredUsd: usd(sponsoredWei), cfg: S.fee });
-  return {
-    ...line,
-    feeEth: ethers.formatEther(total), platformFeeEth: ethers.formatEther(platform),
-    feeUsd: rate > 0 ? Number(usd(total).toFixed(2)) : undefined,
-    feePct: valueWei > 0n ? Number(a.pct.toFixed(2)) : undefined,
-    feeWarn: a.warn || undefined, feeLevel: a.level, feeReasons: a.reasons.length ? a.reasons : undefined,
-    sponsorRefused: a.sponsorRefused || undefined,
-  };
-}
-
 /** Decide this job's fee, in the units of whatever it will be taken from, and
     put it on the job so every later step and the card agree on one number.
 
@@ -1504,7 +1334,10 @@ async function attachFee(line, { p, valueWei, gasWei = 0n, sponsoredWei = 0n }) 
     through the same forward quoter the route uses, and the percentage is
     simply a share of what is being converted. No reverse quote is needed. */
 async function priceFee(j, { p, value, token, next }) {
-  const skip = (why) => ({ ...j, status: next, feeAmount: "0", feeToken: undefined, afterFee: undefined, ...(why ? { feeSkipped: why } : {}) });
+  const skip = (why) => {
+    if (sponsorSpent(j) > 0n) throw new Error(`Legacy gas repayment cannot be skipped: ${why}. This job needs reconciliation.`);
+    return { ...j, status: next, feeAmount: "0", feeToken: undefined, afterFee: undefined, ...(why ? { feeSkipped: why } : {}) };
+  };
   if (!feeRecipient()) return skip("no fee recipient configured");
   let sponsorCost = sponsorSpent(j);
   let transfer = await gasCostWei(60000n);
@@ -1582,6 +1415,10 @@ async function pollGuardians(account, j) {
   if (isRedeemable(record, n)) {
     saveJob(account, { ...j, status: "awaiting_redeem", record });
   } else if (record.expiration && Number(record.expiration) <= Date.now()) {
+    if (j.feePlan?.version === 2) {
+      saveJob(account, { ...j, status: "request_signatures" });
+      return;
+    }
     await ethBridge.requestNewSignatures({ ethPrivHex: transitFor(account).ethPriv, ethTxHash: j.ethTxHash, network: S.network, provider: await ethProvider() });
     saveJob(account, { ...j, status: "awaiting_signatures", sigStartedAt: Date.now() });
   }
@@ -1693,6 +1530,10 @@ async function prepareTapOps(account) {
   if (j.status === "awaiting_swap") {
     if (S.demo) return { step: "koindx", ops: null, rcLimit: koindx.DEFAULT_SWAP_RC };
     const q = await koindx.quoteSwap({ amountInSats: j.vethSats, slippageBps: j.slippageBps, network: S.network, provider: chain.provider() });
+    if (j.feePlan?.version === 2) {
+      if (BigInt(q.amountOut) < BigInt(j.feePlan.koinOutMin)) throw new Error("The KoinDX price is below your approved minimum; wait and try again");
+      q.amountOutMin = gasAccounting.max(BigInt(q.amountOutMin), BigInt(j.feePlan.koinOutMin)).toString();
+    }
     const ops = await koindx.opsKoindxSwap({ account, amountInSats: j.vethSats, amountOutMin: q.amountOutMin, network: S.network, provider: chain.provider() });
     return { step: "koindx", ops, rcLimit: koindx.DEFAULT_SWAP_RC, estKoinOut: q.amountOut };
   }

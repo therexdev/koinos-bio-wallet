@@ -65,6 +65,7 @@ jup.quote = async ({ amount, outputMint }) => {
    here, so both answer from memory. */
 const swap = require("../tools/eth/eth-swap-exec");
 swap.balanceOf = async () => 0n;
+swap.allowance = async () => 0n;
 const solLite = require("../tools/sol/rpc-lite");
 solLite.solBalance = async () => ethers.parseUnits("0.3", 9);
 solLite.tokenBalance = async () => 0n;
@@ -108,7 +109,7 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "stalled-"));
     assert.strictEqual(routes.length, 0,
       "with an empty float and an empty deposit address, no SOL route may be offered");
     const why = q.error || (q.routes || []).map((r) => r.error).join(" ");
-    assert.match(why, /needs gas|ETH_GAS_SPONSOR_KEY|deposit address/i,
+    assert.match(why, /protected reserve/i,
       `and it must say why, got: ${why}`);
     console.log("✓ an empty float cannot sponsor — the route is refused instead of stranding the deposit");
   }
@@ -117,8 +118,9 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "stalled-"));
   {
     SPONSOR_WEI = ethers.parseEther("0.5"); TRANSIT_WEI = 0n;
     const q = await funding.quoteFor(ACCT, "sol", "0.1").catch((e) => ({ error: String(e.message || e) }));
-    const priced = (q.routes || []).filter((r) => r.koinOut != null || !/needs gas/i.test(r.error || ""));
-    assert.ok(priced.length > 0, "a float with ether in it is allowed to sponsor");
+    const priced = (q.routes || []).filter((r) => r.koinOut != null);
+    assert.deepStrictEqual(priced.map((r) => r.id), ["T"],
+      "a funded float offers the route that returns ETH for repayment");
     console.log("✓ a funded float still sponsors (the check gates on money, not on the key)");
   }
 

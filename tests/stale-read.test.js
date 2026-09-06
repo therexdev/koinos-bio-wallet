@@ -190,10 +190,10 @@ function parked(job) {
     funding._forgetFeeCache();
     let sp = await funding._spendableOf("eth", bal);
     let reserved = ethers.parseEther("0.00246") - sp.sats;
-    assert.ok(reserved < ethers.parseEther("0.0015"),
-      `at 1 gwei the reserve must be a small slice, held back ${ethers.formatEther(reserved)}`);
-    assert.ok(sp.sats > ethers.parseEther("0.001"),
-      `most of the balance must stay spendable, got ${sp.label}`);
+    assert.ok(reserved >= ethers.parseEther("0.001524") && reserved < ethers.parseEther("0.0016"),
+      `reserve covers all approval, swap, bridge and renewal steps at the accepted caps: ${ethers.formatEther(reserved)}`);
+    assert.ok(sp.sats > ethers.parseEther("0.0008"),
+      `the remaining balance stays spendable, got ${sp.label}`);
 
     /* When gas is genuinely expensive, it reserves more — that is the point. */
     FEE = { maxFeePerGas: ethers.parseUnits("40", "gwei"), gasPrice: null };

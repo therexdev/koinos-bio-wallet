@@ -146,16 +146,18 @@ quoted beside it and is still chosen when it actually wins.
 One transaction cannot be paid for out of the deposit: the redeem itself,
 which is what creates the ether. A Wormhole VAA names its recipient, so
 **anyone may submit it** and the money still lands where the guardians said —
-so the sponsor (`ETH_GAS_SPONSOR_KEY`) submits that one transaction per job,
-and Route T pays for everything after it. Without a sponsor the rail asks for
-about `ETH_GAS_MIN` of ETH at the Ethereum deposit address instead, and says
-so before any SOL moves rather than after.
+so the sponsor (`ETH_GAS_SPONSOR_KEY`) can submit that transaction when the
+deposit address lacks enough ETH. Route T then repays that gas in ETH and
+pays for the remaining route. With sufficient user ETH, no sponsorship is
+used. Without a sponsor, the quote requires the redemption gas budget at the
+deposit address before any SOL moves. Route S requires the full route's ETH
+budget because its redemption does not release native ETH.
 
-Both routes are quoted **net of every network fee they cause**, whichever
-side pays it, so the router can never prefer a route merely because the
-platform is subsidising it — the mistake that would send every small deposit
-down the expensive path. The card shows each route's fees and who covers
-them, plus Jupiter's price impact. The Solana side keeps a reserve
+Routes are compared after their Ethereum budgets and conversion fees,
+including fees paid separately from existing ETH. The KOIN delivery figure
+does not subtract those separately paid fees twice. The card shows each
+route's expected and maximum Ethereum fees, payment sources, and Jupiter's
+price impact. The Solana side keeps a separate reserve
 (`SOL_RESERVE` 0.01) for fees and account rent and refuses trades under
 `FUND_MIN_SOL` (0.05, because Ethereum gas sets the real floor); a quote that
 cannot cover its own fees is refused with the numbers in the message. Each
@@ -187,67 +189,57 @@ Keep transit amounts modest.
 
 Stablecoin-only deposits need a little ETH for Ethereum gas; set
 `ETH_GAS_SPONSOR_KEY` (an Ethereum private key holding some ETH) and the app
-fronts the gas automatically (`ETH_GAS_TOPUP` per job), mana-sharer style.
+funds only the shortfall needed to buy native ETH for the remaining gas and repayment.
 
 Jobs persist and resume across restarts; every swap carries an on-chain
-min-out; a mid-flow failure leaves funds in a plain ERC-20 the flow retries
-from. The rail runs live only on mainnet (`KOINOS_NETWORK=mainnet` with the
+min-out. A mid-flow failure can leave native ETH, tokens, or an unfinished
+bridge transfer; Retry reconciles the recorded transaction without raising
+the accepted spending limits. The rail runs live only on mainnet (`KOINOS_NETWORK=mainnet` with the
 chain configured) — everywhere else the card simulates.
 
-### Paying for itself
+### ETH gas recovery and fee estimates
 
-The gas sponsor covers what a deposit cannot: a top-up when the deposit
-address holds no ether, and the Wormhole redeem, which must happen *before* a
-Solana deposit has any ether of its own. Left alone that float only drains, so
-every job carries a fee that refills it:
+New conversions use a versioned fee plan accepted with the displayed quote.
+The quote shows estimated conversion/Ethereum fees, their maximum, expected
+KOIN delivery, existing ETH used, and any token amount reserved to buy ETH.
+Exchange fees are included in swap prices. Solana fees and account deposits
+use the separately disclosed SOL reserve. Unused ETH remains available at
+the deposit address rather than becoming an extra fee.
 
-    fee = what the sponsor actually spent on this job (measured from the
-          receipts, plus FUND_FEE_BUFFER_PCT) + FUND_FEE_PCT of the conversion
+The user's confirmed ETH is used first. With too little ETH, a USDT or USDC
+deposit receives only the bootstrap shortfall for necessary approvals and an
+exact-output token-to-ETH swap. That swap atomically unwraps WETH, enforces a
+maximum token input, and provides native ETH for repayment and the remaining
+route. SOL route T sponsors only the Wormhole redeem if needed, then uses
+the ETH it releases. Route S is available only when the user already has
+ETH for its complete Ethereum tail; otherwise choose route T.
 
-The first part keeps the float level; the second is the margin. **Nothing is
-ever absorbed** — the fee always covers the full cost plus the buffer, so the
-float never needs topping up by hand to cover a job it already ran.
+Before the remaining conversion proceeds, a confirmed ETH payment returns
+all sponsor advances and sponsor-paid gas to the funding address recorded
+on the job. It also pays the single platform fee and disclosed sponsorship
+risk charge. An advance and the gas it funded are never charged as two
+separate sponsor expenses. There is no new accumulation of USDT/vKOIN fees
+and no dependency on a future token sweep.
 
-**Every route states its fee, in dollars and as a share of the swap**, on
-every quote. Above `FUND_FEE_WARN_USD` ($10) or `FUND_FEE_WARN_PCT` (10%) it
-is flagged where it cannot be missed rather than noted in grey: $5 of fees on
-a $20 swap is a quarter of it and nobody should walk into that unawares.
-Above `FUND_FEE_MAX_SPONSORED_USD` ($20) the float stops lending altogether
-and the conversion is refused until the deposit address holds its own ether —
-that is the per-job cap on how much one conversion can borrow. A fee smaller
-than the transfer that would carry it is skipped rather than paid.
+The server reserves funds for admitted jobs, checks the funding wallet's
+protected minimum before each sponsored send, and limits total outstanding
+loans. Missing prices or an unprofitable recovery path prevent sponsorship.
+An expired quote must be refreshed; later gas/price increases beyond accepted
+limits pause the job rather than silently increasing the charge. Failed
+transactions still burn gas, so a working ETH balance and a loss reserve are
+required. The controls pause new sponsorship before the reserve is consumed;
+they do not promise that every failed cross-chain attempt is lossless.
 
-**How much ether the float needs.** A sponsored job takes its cost out of the
-float at once and repays it only when the fees it accrued are swept, so the
-exposure is however many jobs fit under the sweep threshold. Each accrues
-about (1 + buffer) times what it cost, so the job size cancels out and the
-requirement is simply the sweep threshold discounted by the buffer, plus
-whatever is in flight when a sweep lands:
+`/api/config` reports `float`: confirmed ETH, protected reserve, unspent
+commitments, outstanding debt and available sponsorship capacity. Signed
+Ethereum transactions are persisted before broadcast and replayed by the
+same hash after lost replies. Actual receipt costs, including reverted gas,
+are recorded exactly once. Reset preserves v2 job history and cannot erase
+pending transactions or debt. Run one wallet process per data directory;
+a process lock prevents two workers from allocating the same sponsor nonce.
 
-| worst-case gas | float needed | worst-case jobs it covers |
-|---|---|---|
-| 10 gwei | ~$185 | 4 |
-| 20 gwei | ~$270 | 8 |
-| 50 gwei | ~$520 | 20 |
-
-**About $500 covers gas up to roughly 50 gwei.** `/api/config` reports
-`float` — the sponsor's address, its balance, the requirement at today's gas,
-how many worst-case jobs that covers and whether it is healthy — so it never
-has to be guessed at. It is on `/api/config` rather than `/api/fund/status`
-because the latter reports ONE account and needs that account's passkey;
-everything in `float` is already public on Ethereum.
-
-**It is taken in whatever the route is already holding, so nothing extra is
-swapped for it.** Route T and ETH deposits pay in ether the moment they hold
-some — one transfer, straight back into the sponsor, and the float is refilled
-immediately. A stablecoin deposit pays in the USDT it is carrying; route S
-pays in vKOIN. Those accrue to `FUND_FEE_TREASURY` and are converted to ether
-in one batch later, because per job that swap costs about as much as it
-recovers — at 5 gwei it returns about $1.39 of a $5.55 top-up, and above 10
-gwei it loses money. Batched over roughly a dozen jobs the same swap is a few
-percent. `node tests/fees.test.js` pins the arithmetic, the warning
-thresholds, the sponsorship limit and the float model, in ether and in a
-token's units.
+See [the implementation and rollout notes](docs/eth-gas-recovery.md) for
+configuration, existing-job handling and verification requirements.
 
 ## The app: one screen, three tabs
 
@@ -526,7 +518,7 @@ node server.js
 | `MIN_SPONSOR_MANA` | `5` | refuse transfers when sponsor mana is below this |
 | `ETH_RPC` | *(public list)* | Ethereum RPC endpoint(s), comma-separated by priority |
 | `ETH_GAS_SPONSOR_KEY` | — | Ethereum key that fronts gas for stablecoin-only and SOL deposits (optional) |
-| `ETH_GAS_TOPUP` | `0.0015` | ETH fronted per job when gas is short |
+| `ETH_GAS_TOPUP` | `0.0015` | legacy setting; new jobs calculate the bootstrap shortfall |
 | `FUND_MAX_ETH` | `0.05` | per-swap ETH cap on the funding rail |
 | `FUND_MAX_STABLE` | `150` | per-swap USDC/USDT cap (USD) |
 | `FUND_SLIPPAGE_BPS` | `150` | slippage floor for every funding swap (1.5%) |
@@ -534,12 +526,19 @@ node server.js
 | `JUPITER_API` | *(lite, keyless)* | Jupiter swap API base; set with `JUPITER_API_KEY` for the keyed `api.jup.ag` tier |
 | `JUPITER_API_KEY` | — | Jupiter API key (optional) |
 | `FUND_FEE_PCT` | `1` | conversion fee, as a percentage of the amount |
-| `FUND_FEE_BUFFER_PCT` | `20` | added on top of the sponsor's measured cost, for the gas the recovery itself burns |
+| `FUND_FEE_BUFFER_PCT` | `20` | legacy fee accounting only; new plans explicitly budget recovery transactions |
 | `FUND_FEE_WARN_USD` | `10` | a fee at or above this is flagged on the card, not just noted |
 | `FUND_FEE_WARN_PCT` | `10` | so is one that is this share of the conversion |
 | `FUND_FEE_MAX_SPONSORED_USD` | `20` | the float will not lend more than this to a single conversion; past it the deposit address must hold its own ether |
-| `FUND_FEE_TREASURY` | *(the sponsor)* | where token-denominated fees accrue; ether fees always go to the sponsor |
-| `FUND_FEE_SWEEP_MULTIPLE` | `12` | accrued tokens are converted to ether only once they are worth this many times the swap's own gas |
+| `FUND_FEE_TREASURY` | *(the sponsor)* | ETH platform-fee recipient only when no sponsor is configured; sponsored jobs repay their pinned funding address |
+| `FUND_SPONSOR_MIN_ETH` | `0.002` | protected ETH balance below which new sponsorship is refused |
+| `FUND_SPONSOR_MAX_ETH` | `0.005` | maximum sponsor exposure for one accepted job, also subject to the USD cap |
+| `FUND_SPONSOR_MAX_OUTSTANDING_ETH` | `0.02` | maximum total debt plus unspent sponsorship commitments |
+| `FUND_SPONSOR_RISK_BPS` | `2000` | disclosed risk charge on actual sponsor cost (20%); separate from platform fee |
+| `FUND_GAS_HEADROOM_BPS` | `2000` | gas-unit headroom (20%) within the accepted plan |
+| `FUND_GAS_PRICE_HEADROOM_BPS` | `2500` | gas-price headroom (25%) in the quote ceiling |
+| `FUND_QUOTE_TTL_SECONDS` | `60` | time to accept an initial fee quote |
+| `FUND_ETH_CONFIRMATIONS` | `2` | confirmations before recording Ethereum delivery and repayment |
 | `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
 | `FUND_MIN_SOL` | `0.05` | smallest SOL swap the rail accepts (Ethereum gas sets the floor) |
 | `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |
