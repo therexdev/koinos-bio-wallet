@@ -146,8 +146,9 @@ function boot({ sponsor }) {
     assert.ok(Math.abs(koin(s.koinOut) - (gross - (platformS + REDEEM + VORTEX) * KOIN_PER_ETH)) < 0.01,
       `route S is quoted net of its Ethereum tail and the fee: ${koin(s.koinOut)}`);
     assert.ok(Math.abs(Number(s.feeEth) - (platformS + REDEEM + VORTEX)) < 1e-9);
-    /* Nobody is sponsoring in this run, so it must not claim otherwise. */
-    assert.strictEqual(s.feePaidBy, "deposit", "with no sponsor the fees come out of the deposit, and the card must say so");
+    /* The card never claims anyone else pays: the fee is deducted from the
+       conversion whoever fronts the gas, so no payer field is published. */
+    assert.strictEqual(s.feePaidBy, undefined, "no route claims the fee is covered for you");
     /* 0.2 SOL is 1200 KOIN through the Solana pool but 1297.5 through the
        deeper Ethereum one, and the fees only widen it — so the ranking picks
        route T, and does so on the net numbers rather than the gross. */

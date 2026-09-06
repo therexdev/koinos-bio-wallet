@@ -184,7 +184,10 @@ function parked(job) {
       ethWei: ethers.parseEther("0.00246").toString(), eth: "0.00246",
       usdcSats: "0", usdtSats: "0", vkoinSats: "0",
     };
+    /* The fee is cached for a few seconds so one quote doesn't ask the node
+       five times; each price below is a fresh market, so age the cache out. */
     FEE = { maxFeePerGas: ethers.parseUnits("1", "gwei"), gasPrice: null };
+    funding._forgetFeeCache();
     let sp = await funding._spendableOf("eth", bal);
     let reserved = ethers.parseEther("0.00246") - sp.sats;
     assert.ok(reserved < ethers.parseEther("0.0015"),
@@ -194,11 +197,13 @@ function parked(job) {
 
     /* When gas is genuinely expensive, it reserves more — that is the point. */
     FEE = { maxFeePerGas: ethers.parseUnits("40", "gwei"), gasPrice: null };
+    funding._forgetFeeCache();
     const pricey = await funding._spendableOf("eth", bal);
     assert.ok(pricey.sats < sp.sats, "a higher fee must hold back more, not the same flat amount");
 
     /* And an unreadable fee falls back rather than letting a job strand. */
     FEE = { maxFeePerGas: null, gasPrice: null };
+    funding._forgetFeeCache();
     const fallback = await funding._spendableOf("eth", bal);
     assert.ok(fallback.sats >= 0n, "an unreadable fee must not throw");
     console.log("✓ gas reserve tracks the live fee (cheap gas no longer eats the deposit)");

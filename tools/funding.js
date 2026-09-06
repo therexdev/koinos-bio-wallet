@@ -240,7 +240,7 @@ async function ethProvider() {
   if (!_ethProvider) _ethProvider = await makeProvider();
   return _ethProvider;
 }
-function dropProvider() { _ethProvider = null; _solConn = null; if (wormhole) wormhole.forget(); }
+function dropProvider() { _ethProvider = null; _solConn = null; _feeData = { at: 0, p: null }; if (wormhole) wormhole.forget(); }
 
 /** Is Route S usable on this server? */
 function solRail() {
@@ -252,6 +252,10 @@ function solRail() {
 const railOn = () => solRail().enabled;
 /** SOL a deposit must reach before any of it can move: reserve + minimum. */
 const solFloor = () => SU.formatSol(SU.parseSol(S.solReserve) + SU.parseSol(S.minSol));
+
+/* The assets a deposit address can be converted from, in the order the card
+   lists them. */
+const FUNDABLE = ["eth", "usdc", "usdt", "sol"];
 
 /** Wormhole normalises to 8 decimals, so one unit of wETH on Solana is
     1e10 wei of ether. */
@@ -367,10 +371,28 @@ const ROUTE_GAS_UNITS = 900000n;
     when gas spikes, and when gas is cheap it quietly swallows most of a
     small deposit (a 0.0024 ETH reserve left 0.00006 of a 0.00246 balance
     spendable — 2% of the money, for gas that costs a fraction of that). */
+/* Ethereum's fee is read once and reused for a few seconds. A single quote
+   prices the gas reserve, the redeem, the Vortex tail and the fee transfer;
+   asking the node five times for a number that moves once a block turned
+   every quote into a stack of round trips.
+
+   It is the in-flight PROMISE that is cached, not the number: those callers
+   run concurrently, so caching only the settled value would let every one of
+   them miss and fire anyway — the round trips it was meant to remove. A read
+   that fails is forgotten rather than remembered as this block's fee. */
+let _feeData = { at: 0, p: null };
+async function feeData() {
+  if (_feeData.p && Date.now() - _feeData.at < 10000) return _feeData.p;
+  const pending = (async () => (await ethProvider()).getFeeData())();
+  _feeData = { at: Date.now(), p: pending };
+  pending.catch(() => { if (_feeData.p === pending) _feeData = { at: 0, p: null }; });
+  return pending;
+}
+
 async function gasReserveWei() {
   const floor = ethers.parseEther(S.gasMinEth || "0") / 4n;
   try {
-    const fee = await (await ethProvider()).getFeeData();
+    const fee = await feeData();
     const perGas = fee.maxFeePerGas ?? fee.gasPrice ?? 0n;
     if (perGas > 0n) {
       const est = (perGas * ROUTE_GAS_UNITS * 15n) / 10n; // 50% headroom
@@ -391,7 +413,7 @@ const VORTEX_TAIL_GAS_UNITS = 260000n;                // approve_bridge + bridge
     the reserve uses. */
 async function gasCostWei(units) {
   try {
-    const fee = await (await ethProvider()).getFeeData();
+    const fee = await feeData();
     const perGas = fee.maxFeePerGas ?? fee.gasPrice ?? 0n;
     if (perGas > 0n) return (perGas * BigInt(units) * 15n) / 10n;
   } catch (_) { /* fee read failed — fall back to the configured floor */ }
@@ -491,10 +513,19 @@ async function quoteFor(account, asset, amount) {
     send every small deposit down the expensive path. */
 async function quoteSol(account, amt) {
   const p = await ethProvider();
-  const [reserveWei, redeemWei, vortexWei] = await Promise.all([
+  /* A quote asked for on every keystroke cannot be a queue. Nothing below
+     needs anything else below it, so the whole prelude is one round trip
+     deep: the three gas prices share a single cached fee read, and Jupiter
+     is asked about both routes at once instead of route S waiting to learn
+     what route T's first leg fetched. Settled rather than raced, so one
+     Solana hiccup still leaves the other route quotable. */
+  const settle = (pr) => pr.then((q) => ({ q, err: null }), (err) => ({ q: null, err }));
+  const [reserveWei, redeemWei, vortexWei, redeemerT, redeemerS, wethQuote, vkoinQuote] = await Promise.all([
     gasReserveWei(), gasCostWei(WH_REDEEM_GAS_UNITS), gasCostWei(VORTEX_TAIL_GAS_UNITS),
+    redeemerFor(account, "T"), redeemerFor(account, "S"),
+    settle(jup.quote({ amount: amt, slippageBps: S.slippageBps, outputMint: SC.WETH_SOL_MINT })),
+    settle(jup.quote({ amount: amt, slippageBps: S.slippageBps })),
   ]);
-  const [redeemerT, redeemerS] = await Promise.all([redeemerFor(account, "T"), redeemerFor(account, "S")]);
   const noRedeemer = (r) => `the Ethereum side needs gas — set ETH_GAS_SPONSOR_KEY on the server, or send about ${r && r.needWei ? short(ethers.formatEther(r.needWei)) : S.gasMinEth} ETH to your Ethereum deposit address`;
   /* What the gas is worth in KOIN, so it can be taken off a quote. */
   const gasKoin = async (wei) => {
@@ -502,11 +533,10 @@ async function quoteSol(account, amt) {
     try { return BigInt((await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(wei), slippageBps: 0, provider: p })).koinOut); }
     catch (_) { return 0n; }
   };
-  const qs = [];
-  /* What this much SOL is worth in ether — route T's own first leg answers
-     it, and both routes are converting the same SOL, so it is the value the
-     percentage fee is taken against either way. */
-  let solValueWei = 0n;
+  /* What this much SOL is worth in ether: route T's first leg, which both
+     routes share, because both are converting the same SOL and that is the
+     value the percentage fee is taken against either way. */
+  const solValueWei = wethQuote.q ? wormholeUnitsToWei(wethQuote.q.outAmount) : 0n;
   /* A quote that the fees have eaten is not a quote. Never let a subtraction
      surface as a negative amount, or as a floor above the amount itself. */
   const afterFee = (gross, floor, fee) => {
@@ -521,13 +551,18 @@ async function quoteSol(account, amt) {
     return { koinOut: net.toString(), koinOutMin: min > 0n && min < net ? min.toString() : undefined };
   };
 
+  /* What remains is each route's own Ethereum pricing, and those run
+     concurrently too: route T's two quoter calls no longer sit in front of
+     route S's. Each catches into an unpriceable line, so a route that cannot
+     be quoted says why instead of taking the other one down with it. */
+
   /* Route T — buys ether, so the deposit pays for its own Ethereum legs and
      the vKOIN comes from the deep Uniswap pool. */
-  try {
+  const routeT = (async () => {
     if (!redeemerT) throw new Error(noRedeemer(null));
-    const j = await jup.quote({ amount: amt, slippageBps: S.slippageBps, outputMint: SC.WETH_SOL_MINT });
-    const arrivedWei = wormholeUnitsToWei(j.outAmount);
-    solValueWei = arrivedWei;
+    if (wethQuote.err) throw wethQuote.err;
+    const j = wethQuote.q;
+    const arrivedWei = solValueWei;
     if (arrivedWei <= reserveWei) {
       throw new Error(`this much SOL buys about ${short(ethers.formatEther(arrivedWei))} ETH, and the Ethereum swaps need about ${short(ethers.formatEther(reserveWei))} ETH of gas — convert more at once`);
     }
@@ -549,35 +584,34 @@ async function quoteSol(account, amt) {
       ? await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(minArrivedWei - reserveWei - platformWei), slippageBps: S.slippageBps, provider: p })
       : { koinOutMin: "0" };
     /* Both figures are already net of the gas and the fee. */
-    qs.push(await attachFee({
+    return attachFee({
       ...routes.descriptor("T"),
       ...afterFee(c.koinOut, cMin.koinOutMin, 0n),
       priceImpactPct: j.priceImpactPct, via: j.via,
       ethBought: ethers.formatEther(arrivedWei),
-      /* The deposit funds its own legs; only the redeem can be sponsored. */
-      feePaidBy: redeemerT.sponsored ? "deposit-and-platform" : "deposit",
-    }, { p, valueWei: arrivedWei, gasWei: reserveWei, sponsoredWei: redeemerT.sponsored ? redeemWei : 0n }));
-  } catch (e) { qs.push({ ...routes.descriptor("T"), koinOut: null, error: String(e.message || e) }); }
+    }, { p, valueWei: arrivedWei, gasWei: reserveWei, sponsoredWei: redeemerT.sponsored ? redeemWei : 0n });
+  })().catch((e) => ({ ...routes.descriptor("T"), koinOut: null, error: String(e.message || e) }));
 
   /* Route S — buys vKOIN straight from the small Solana pool. Nothing it
      brings can pay for Ethereum, so the platform funds the whole tail. */
-  try {
+  const routeS = (async () => {
     if (!redeemerS) throw new Error(noRedeemer(redeemerT));
-    const j = await jup.quote({ amount: amt, slippageBps: S.slippageBps });
+    if (vkoinQuote.err) throw vkoinQuote.err;
+    const j = vkoinQuote.q;
     /* Route S never holds ether, so everything on the Ethereum side is
        borrowed from the float — which is what the per-job limit is for. */
     const borrowed = redeemerS.sponsored ? redeemWei + vortexWei : 0n;
     /* Its fee is taken in vKOIN, so it comes off the KOIN that lands. */
     const platformWei = fees.feeWei({ sponsorWei: borrowed, valueWei: solValueWei, cfg: S.fee }).fee;
     const fee = await gasKoin(platformWei + (redeemerS.sponsored ? 0n : redeemWei + vortexWei));
-    qs.push(await attachFee({
+    return attachFee({
       ...routes.descriptor("S"),
       ...afterFee(j.outAmount, j.outAmountMin, fee),
       priceImpactPct: j.priceImpactPct, via: j.via,
-      feePaidBy: redeemerS.sponsored ? "platform" : "deposit",
-    }, { p, valueWei: solValueWei, gasWei: redeemerS.sponsored ? 0n : redeemWei + vortexWei, sponsoredWei: borrowed }));
-  } catch (e) { qs.push({ ...routes.descriptor("S"), koinOut: null, error: String(e.message || e) }); }
+    }, { p, valueWei: solValueWei, gasWei: redeemerS.sponsored ? 0n : redeemWei + vortexWei, sponsoredWei: borrowed });
+  })().catch((e) => ({ ...routes.descriptor("S"), koinOut: null, error: String(e.message || e) }));
 
+  const qs = await Promise.all([routeT, routeS]);
   return { asset: "sol", amount: SU.formatSol(amt), ...routes.compareRoutes(qs) };
 }
 const short = (s) => String(s).slice(0, 9);
@@ -587,14 +621,18 @@ const short = (s) => String(s).slice(0, 9);
 async function quotes(account) {
   const bal = await balances(account);
   if (!bal) return null;
-  const out = {};
-  for (const asset of ["eth", "usdc", "usdt", "sol"]) {
+  /* Each asset's routes are priced from nothing but its own balance, so
+     pricing them one after another only stacked their round trips: an
+     address holding both ETH and SOL waited out the entire ETH quote before
+     the first Solana question was asked. A quote that fails still reports
+     its own reason and leaves the others alone. */
+  const priced = await Promise.all(FUNDABLE.map(async (asset) => {
     const sp = await spendableOf(asset, bal);
-    if (sp.sats <= 0n) continue;
-    try { out[asset] = await quoteFor(account, asset, sp.label); }
-    catch (e) { out[asset] = { asset, amount: sp.label, best: null, routes: [], error: String(e.message || e) }; }
-  }
-  return out;
+    if (sp.sats <= 0n) return null;
+    try { return [asset, await quoteFor(account, asset, sp.label)]; }
+    catch (e) { return [asset, { asset, amount: sp.label, best: null, routes: [], error: String(e.message || e) }]; }
+  }));
+  return Object.fromEntries(priced.filter(Boolean));
 }
 
 /* ---------------- jobs ---------------- */
@@ -1610,8 +1648,10 @@ function demoQuoteFor(asset, amt, spendable) {
   if (asset === "sol") {
     const solAmt = Number(SU.formatSol(amt));
     const qs = [];
-    /* The simulation states the same thing the live quote does: who actually
-       pays. Without a sponsor key that is the deposit, in demo as in life. */
+    /* The fee always comes out of the deposit, so no route claims otherwise.
+       A sponsor key only decides whether the platform fronts the gas first
+       and takes it back — which is what the refusal ceiling is measured
+       against, in demo as in life. */
     const sponsored = !!S.gasSponsorKey;
     const net = (gross, feeKoin, id, extra) => {
       if (gross - feeKoin <= 0) {
@@ -1636,11 +1676,9 @@ function demoQuoteFor(asset, amt, spendable) {
     };
     qs.push(net(solAmt * DEMO_RATE_SOL_KOIN_T, DEMO_GAS_KOIN_T, "T", {
       priceImpactPct: Math.round(solAmt * 5) / 100, via: ["Meteora"], ethBought: (solAmt / 60).toFixed(6),
-      feePaidBy: sponsored ? "deposit-and-platform" : "deposit",
     }));
     qs.push(net(solAmt * DEMO_RATE_SOL_KOIN, DEMO_GAS_KOIN_S, "S", {
       priceImpactPct: Math.round(solAmt * 300) / 100, via: ["Raydium"],
-      feePaidBy: sponsored ? "platform" : "deposit",
     }));
     return { asset, amount: SU.formatSol(amt), ...routes.compareRoutes(qs) };
   }
@@ -1727,17 +1765,26 @@ async function status(account) {
      included); route quotes only while nothing is actively moving. */
   try {
     out.balances = await balances(account);
-    if (out.balances) {
-      out.spendable = {
-        eth: (await spendableOf("eth", out.balances)).label,
-        usdc: (await spendableOf("usdc", out.balances)).label,
-        usdt: (await spendableOf("usdt", out.balances)).label,
-        sol: (await spendableOf("sol", out.balances)).label,
-      };
-    }
-    if (!j || TERMINAL.has(j.status)) out.quotes = await quotes(account);
-    out.float = await floatHealth().catch(() => undefined);
   } catch (e) { out.balancesError = String(e.message || e).slice(0, 160); }
+  if (out.balances) {
+    /* What is spendable, what it would buy, and how the float is doing are
+       three separate questions about the same moment. Asked in sequence, a
+       poll cost as long as all three added together — and it runs every few
+       seconds while a swap is moving. Only the first needs the balances.
+
+       Each keeps its own failure: the card gates the whole convert panel on
+       `spendable`, so a quote or a float read that falls over must not take
+       the amounts — and with them the way to convert — off the screen. */
+    const wantQuotes = !j || TERMINAL.has(j.status);
+    const [spendable, quoted] = await Promise.all([
+      Promise.all(FUNDABLE.map((a) => spendableOf(a, out.balances).then((sp) => sp.label)))
+        .catch((e) => { out.balancesError = String(e.message || e).slice(0, 160); return null; }),
+      wantQuotes ? quotes(account).catch(() => null) : Promise.resolve(undefined),
+      floatHealth().then((f) => { out.float = f; }, () => {}),
+    ]);
+    if (spendable) out.spendable = Object.fromEntries(FUNDABLE.map((a, i) => [a, spendable[i]]));
+    if (wantQuotes) out.quotes = quoted;
+  }
   return out;
 }
 
@@ -1748,6 +1795,9 @@ module.exports = {
   tick,
   /* the gas-reserve maths, exposed so a test can price it at a known fee */
   _spendableOf: spendableOf,
+  /* ages out the cached fee, so a test can price two different gas markets
+     back to back without waiting ten real seconds */
+  _forgetFeeCache: () => { _feeData = { at: 0, p: null }; },
   /* Route S's where-is-the-money logic, exposed so a test can feed it facts */
   _reconcileRouteS: reconcileSol,
   _solRail: solRail,

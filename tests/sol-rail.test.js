@@ -190,10 +190,10 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.ok(BigInt(byId.T.koinOut) > BigInt(byId.S.koinOut));
     assert.ok(byId.T.steps.some((x) => /Wormhole/.test(x)) && byId.T.steps.some((x) => /Uniswap/.test(x)) && byId.T.steps.some((x) => /Vortex/.test(x)));
     assert.ok(byId.T.feeEth && byId.S.feeEth, "each route says what its network fees cost");
-    /* No sponsor key is set in this process, so neither route may claim the
-       platform is paying. The card states the payer; it never assumes one. */
-    assert.strictEqual(byId.S.feePaidBy, "deposit", "with no sponsor, route S's gas comes out of the deposit");
-    assert.strictEqual(byId.T.feePaidBy, "deposit");
+    /* Neither route claims the fee is on us: it is deducted from the
+       conversion either way, so saying otherwise would be untrue. */
+    assert.strictEqual(byId.S.feePaidBy, undefined);
+    assert.strictEqual(byId.T.feePaidBy, undefined);
 
     await assert.rejects(funding.quoteFor(ACCT, "sol", "0.01"), /Minimum is 0.05 SOL/);
     await assert.rejects(funding.quoteFor(ACCT, "sol", "0.5"), /Max right now is 0.34 SOL/);

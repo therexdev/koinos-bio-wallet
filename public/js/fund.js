@@ -28,7 +28,7 @@ const Fund = (() => {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const STEP_LABEL = {
-    front_gas: 'Fronting a little ETH for gas (on us)…',
+    front_gas: 'Fronting the ETH for gas, taken back from the conversion…',
     approve_v3_usdc: 'Approving USDC on Uniswap…',
     swap_usdc_usdt: 'Swapping USDC → USDT (Uniswap v3)…',
     swap_eth_usdt: 'Swapping ETH → USDT (Uniswap v3)…',
@@ -199,20 +199,20 @@ const Fund = (() => {
       /* A shallow pool moves a lot for a little — say so before the tap,
          not after: the trade is priced with the impact in, and a smaller
          amount keeps more of it. */
-      /* What the network takes, and out of whose pocket — the difference
-         between the two SOL routes is mostly this. */
-      const PAYER = {
-        platform: ' — we cover these',
-        deposit: ' — paid out of your deposit',
-        'deposit-and-platform': ' — from your deposit; we cover the bridge redeem',
-      };
+      /* What the network takes to finish the route — the difference between
+         the two SOL routes is mostly this. */
       /* The cost is stated on every route, every time — in dollars where we
-         have a price, because "0.0052 ETH" means nothing to most people. */
+         have a price, because "0.0052 ETH" means nothing to most people.
+
+         It never says who "covers" it. Whoever fronts the gas transaction,
+         the fee comes out of the conversion and the KOIN figure above is
+         already net of it, so any wording suggesting it is on us is simply
+         untrue to the person reading it. */
       const money = r.feeUsd != null
         ? `$${r.feeUsd.toFixed(2)}${r.feePct != null ? ` · ${r.feePct.toFixed(1)}% of this swap` : ''}`
         : `${Number(r.feeEth || 0).toFixed(4)} ETH`;
       const fee = r.feeEth
-        ? `<span class="fund-fee">fees ${esc(money)}${PAYER[r.feePaidBy] || ''}</span>`
+        ? `<span class="fund-fee">fees ${esc(money)} — already deducted above</span>`
         : '';
       /* And when it is a big share of a small swap, say it where it cannot be
          missed rather than in grey text under the number. */
