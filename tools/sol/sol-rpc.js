@@ -24,13 +24,12 @@ async function makeConnection(urls = C.solanaRpcCandidates()) {
   throw new Error(`No Solana RPC reachable: ${(lastErr && lastErr.message) || lastErr}`);
 }
 
-/** A fresh transit keypair. The secret is the 64-byte key in base58 — the
-    form every Solana wallet imports — and lives in data/funding.json next to
-    the account's Ethereum transit key, with the same 0600 custody. */
-function newKeypair() {
-  const kp = Keypair.generate();
-  return { solAddress: kp.publicKey.toBase58(), solSecret: koilib.utils.encodeBase58(kp.secretKey) };
-}
+/** A fresh transit keypair. Generated in tools/sol/keys.js so that it works
+    with or without this module's packages; re-exported here because callers
+    that already hold an RPC connection expect to find it. The secret is the
+    64-byte key in base58 — the form every Solana wallet imports — and lives in
+    data/funding.json beside the account's Ethereum transit key, same custody. */
+const newKeypair = require("./keys").newKeypair;
 function keypairFrom(secretB58) {
   return Keypair.fromSecretKey(koilib.utils.decodeBase58(String(secretB58)));
 }

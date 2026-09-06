@@ -113,6 +113,7 @@ const Fund = (() => {
     opt('#fund-eth-qr', (n) => { n.classList.remove('fail'); n.innerHTML = '<span class="skel" aria-hidden="true"></span>'; });
     opt('#fund-sol-qr', (n) => { n.classList.remove('fail'); n.innerHTML = '<span class="skel" aria-hidden="true"></span>'; });
     opt('#fund-sol-block', (n) => { n.hidden = true; });
+    opt('#fund-sol-note', (n) => { n.hidden = true; n.textContent = ''; });
     opt('#fund-sol-addr', (n) => { n.textContent = ''; });
     opt('#stat-sol-row', (n) => { n.hidden = true; });
     opt('#deposit-stats', (n) => { n.hidden = true; });
@@ -276,9 +277,21 @@ const Fund = (() => {
           .catch(() => { QR_SHOWN = null; n.classList.add('fail'); n.textContent = 'QR unavailable — copy the address instead'; });
       });
     }
-    /* The Solana deposit block, when this server runs Route S. */
-    const solOn = !!(st.solAddress && st.solRail && st.solRail.enabled);
+    /* The Solana deposit address is shown whenever the account has one —
+       which is always. Whether this server can CONVERT from it is a separate
+       question, answered below rather than by hiding the address: a person
+       who cannot see where to send SOL has no way to begin at all. */
+    const solOn = !!st.solAddress;
+    const solConvert = !!(st.solRail && st.solRail.enabled);
     opt('#fund-sol-block', (n) => { n.hidden = !solOn; });
+    opt('#fund-sol-note', (n) => {
+      n.hidden = !solOn || solConvert;
+      if (!n.hidden) {
+        /* The reason is for whoever runs the server — it is in the boot log
+           and in /api/config. Here it would only be noise. */
+        n.textContent = 'SOL sent here is safe and stays yours, but this server cannot convert it to KOIN yet.';
+      }
+    });
     if (solOn) {
       opt('#fund-sol-addr', (n) => { n.textContent = st.solAddress; });
       if (st.solAddress !== QR_SHOWN_SOL && typeof Receive !== 'undefined') {
@@ -306,7 +319,7 @@ const Fund = (() => {
       const can = (a) => Number(sp[a]) > 0;
       const showEth = !!b && can('eth');
       const showStable = !!b && (can('usdc') || can('usdt'));
-      const showSol = solOn && !!b && b.sol != null && can('sol');
+      const showSol = solConvert && !!b && b.sol != null && can('sol');
       $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
       $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
       opt('#stat-sol', (n) => { n.innerHTML = showSol ? f(b.sol, 4) + tag : '—'; });
@@ -339,7 +352,7 @@ const Fund = (() => {
       /* Always shown, zero included. Hiding it when it hits 0 is how a
          correct bridging step reads as "my money disappeared". */
       strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong></span>`);
-      if (solOn) {
+      if (solConvert) {
         if (b.sol != null) {
           const sp = st.spendable || {};
           const stuck = Number(b.sol) > 0 && !(Number(sp.sol) > 0) && st.solFloor;
@@ -402,7 +415,7 @@ const Fund = (() => {
       for (const asset of ['eth', 'usdc', 'usdt', 'sol']) {
         const spend = st.spendable[asset];
         if (!(Number(spend) > 0)) continue;
-        if (asset === 'sol' && (!solOn || b.sol == null)) continue;
+        if (asset === 'sol' && (!solConvert || b.sol == null)) continue;
         const open = document.querySelector(`.fund-asset[data-asset="${asset}"] input[data-amt]`);
         const value = open && document.activeElement === open ? open.value : spend;
         const cap = !st.caps ? '' : asset === 'eth' ? st.caps.eth : asset === 'sol' ? (st.caps.sol || '') : st.caps.stable;

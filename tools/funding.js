@@ -67,6 +67,10 @@ const U = require("./eth/units");
 const SC = require("./sol/sol-constants");
 const SU = require("./sol/units");
 const jup = require("./sol/jupiter");
+/* Making and showing the Solana deposit address needs no Solana packages at
+   all — see tools/sol/keys.js. Only converting what lands there does, which
+   is why this one is a plain require and the two below are not. */
+const solKeys = require("./sol/keys");
 let sol = null, wormhole = null, SOL_LOAD_ERROR = null;
 try { sol = require("./sol/sol-rpc"); wormhole = require("./sol/wormhole"); }
 catch (e) { SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; }
@@ -217,10 +221,14 @@ function enable(account) {
     S.store.transit[account] = t;
     persist();
   }
-  /* The Solana transit key — added lazily, so accounts from before Route S
-     get one the first time they are looked at. */
-  if (sol && !t.solAddress) {
-    Object.assign(t, sol.newKeypair(), { solTs: Date.now() });
+  /* The Solana transit key — added lazily, so accounts from before the
+     Solana rail get one the first time they are looked at. Deliberately NOT
+     conditional on the Solana packages: an address a person can send SOL to
+     is not the same thing as the machinery that converts it, and gating the
+     address on that machinery is how the whole feature disappears on a host
+     where one optional package did not install. */
+  if (!t.solAddress) {
+    Object.assign(t, solKeys.newKeypair(), { solTs: Date.now() });
     persist();
   }
   return { ethAddress: t.ethAddress, solAddress: t.solAddress || null };
@@ -1504,6 +1512,7 @@ async function status(account) {
   const j = job(account);
   const out = {
     enabled: true, demo: S.demo || undefined, ethAddress: t.ethAddress, job: publicJob(j),
+    /* The address always; whether we can convert from it, separately. */
     solAddress: t.solAddress || null, solRail: solRail(),
     caps: { eth: S.maxEth, stable: S.maxStable, sol: S.maxSol },
     solMin: S.minSol, solFloor: solFloor(),

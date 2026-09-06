@@ -429,8 +429,13 @@ serving. `/api/config` reports what is running:
 
 The five Solana packages are **optionalDependencies**: npm carries on when
 they cannot be installed, so a rail that is optional in the code cannot fail
-the wallet's deploy. If `solRail` is false, install them on the host (Node
-20.19+) and restart; nothing else is affected.
+the wallet's deploy. The **deposit address does not depend on them** — a
+Solana address is an ed25519 public key in base58, which Node's own crypto
+makes (`tools/sol/keys.js`, checked against `@solana/web3.js`), so every
+account has one and the Buy tab always shows it. When `solRail` is false the
+address and its QR are still there, with a line saying conversion is not
+available yet; install the packages on the host (Node 20.19+) and restart to
+turn conversion on. Nothing else is affected either way.
 
 If `commit` does not match `git rev-parse HEAD`, the deploy did not take. The
 service worker is network-first and never caches `/api`, so a stale screen is

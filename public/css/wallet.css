@@ -461,6 +461,7 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .fund-net { font: 700 10px/1 var(--font); text-transform: uppercase; letter-spacing: .04em; padding: 5px 8px; border-radius: var(--r-pill); border: 1px solid rgba(96, 165, 250, .5); color: var(--info); margin-left: auto; }
 .fund-net.sol { border-color: rgba(20, 241, 149, .5); color: var(--sol); }
 .fund-chain { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.sol-off { color: var(--warn); text-align: center; }
 .fund-chain .step-head { margin-bottom: 4px; }
 .fund-chain .step-head .k { font-size: 14px; }
 .fund-addr { font-size: 13px; }
