@@ -676,7 +676,22 @@ api.fundPrepareStep = async (body) => {
   return { ok: true, ref, tx, step: tap.step, selfPaid, toppedUp: topUp && topUp.toppedUp || undefined };
 };
 
-api.health = async () => ({ ok: true, demo: DEMO, network: CFG.network });
+/* Plain liveness, plus — on ?rail=1 — whether the funding settings actually
+   took. Both RPC settings fall through to public endpoints when they fail,
+   so "the wallet still works" is no evidence that ETH_RPC or SOLANA_RPC is
+   right; this is the only place that says so out loud. No passkey, because
+   an operator checking their own deploy should not need an account, and
+   nothing secret is in the answer — funding.railHealth reports hosts and
+   the sponsor's public address, never a URL, a key or a query string. */
+api.health = async (params) => {
+  const out = { ok: true, demo: DEMO, network: CFG.network };
+  if (params && params.get('rail')) {
+    out.rail = DEMO
+      ? { demo: true, note: 'this server is in demo mode — no real conversion runs, whatever the settings say' }
+      : await funding.railHealth().catch((e) => ({ error: String(e.message || e).slice(0, 200) }));
+  }
+  return out;
+};
 
 /* ---------------- HTTP plumbing ---------------- */
 

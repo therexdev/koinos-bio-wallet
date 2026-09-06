@@ -503,6 +503,35 @@ traffic (HTTP 403) and rate-limits the rest, so without your own endpoint the
 SOL balance cannot be read. The wallet says exactly that on the card rather
 than showing nothing.
 
+### Checking the settings actually took
+
+    https://<host>/api/health?rail=1
+
+Both RPC settings fall back to public endpoints when they fail. That is right
+for a deposit that must not go dark, and it makes a mistyped key invisible:
+the wallet keeps working on public nodes until they start refusing traffic,
+and the only symptom is intermittent failure weeks later. So this probes each
+endpoint you configured **on its own** — a healthy fallback cannot disguise a
+broken setting — and reports for each of `ETH_RPC`, `SOLANA_RPC` and
+`ETH_GAS_SPONSOR_KEY`:
+
+* whether you set it at all, or the rail is quietly on the public list;
+* whether your endpoint answered, and how fast;
+* for the sponsor: its **address**, its balance, what the float needs, and
+  whether it is healthy — the address is reported even when the node read
+  fails, because that is when you most need to know where to send ether.
+
+No passkey: checking your own deploy should not need an account. Nothing
+secret is in the answer either — an RPC key lives inside the URL and RPC
+errors love to echo the URL back, so only the **host** is ever reported and
+every message is stripped of anything URL-shaped first. `tests/rail-health.test.js`
+serves the 403 from a stand-in that echoes a key-bearing URL and asserts none
+of it survives.
+
+A server in demo mode says so here instead, because in demo no setting means
+anything — which is also the fastest answer to "why am I seeing sample
+prices".
+
 The deposit address is an ed25519 public key in base58, which Node's own
 crypto makes (`tools/sol/keys.js`), so every account has one from birth and
 the Buy tab always shows it.

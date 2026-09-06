@@ -1788,6 +1788,107 @@ async function status(account) {
   return out;
 }
 
+/* ---------------- is the rail actually wired up? ----------------
+
+   ETH_RPC and SOLANA_RPC both fall through to public endpoints when they
+   fail, which is right for a deposit that must not go dark — and terrible
+   for the operator, because a mistyped key looks exactly like a working
+   one until the public node starts refusing datacenter traffic. So this
+   probes each configured endpoint BY ITSELF, and says which one actually
+   answered.
+
+   It is served unauthenticated, so it must give away nothing an RPC URL
+   is hiding: the key lives in the URL's path or query, and RPC errors
+   love to echo the whole URL back. Only the host is ever reported, and
+   every message is stripped of anything URL-shaped first. */
+
+/** A URL reduced to its host, or null — never the path, never the query. */
+function rpcHost(url) {
+  try { return new URL(String(url)).host; } catch (_) { return null; }
+}
+
+/** An error message with every URL in it replaced by its bare host, so a
+    key embedded in one cannot ride out on a diagnostic. */
+function scrubUrls(msg) {
+  return String(msg || "")
+    .replace(/https?:\/\/[^\s"'`,)]+/gi, (u) => rpcHost(u) || "<endpoint>")
+    .slice(0, 200);
+}
+
+/** Probe one endpoint on its own, so a healthy fallback cannot disguise a
+    broken setting. */
+async function probeEth(url) {
+  const started = Date.now();
+  try {
+    const p = new ethers.JsonRpcProvider(url, undefined, { staticNetwork: true });
+    const n = await p.getBlockNumber();
+    try { p.destroy(); } catch (_) { /* older ethers has no destroy */ }
+    return { host: rpcHost(url), ok: true, blockNumber: n, ms: Date.now() - started };
+  } catch (e) {
+    return { host: rpcHost(url), ok: false, error: scrubUrls(e.message || e) };
+  }
+}
+
+async function probeSol(url) {
+  const started = Date.now();
+  try {
+    const height = await solLite.blockHeight({ urls: [url] });
+    return { host: rpcHost(url), ok: true, blockHeight: height, ms: Date.now() - started };
+  } catch (e) {
+    const why = scrubUrls(e.message || e);
+    return {
+      host: rpcHost(url), ok: false, error: why,
+      /* The one failure with a specific cure, so it is named rather than
+         left as a status code. */
+      hint: /\b(403|429)\b|forbidden|too many/i.test(why)
+        ? "this endpoint refuses server traffic — SOLANA_RPC needs to be your own"
+        : undefined,
+    };
+  }
+}
+
+/** What an operator needs to know before trusting the rail: whether each
+    setting took, and whether the float can pay for a job. */
+async function railHealth() {
+  const ethUrls = ethBridge.rpcCandidates ? ethBridge.rpcCandidates() : [];
+  const solUrls = SC.solanaRpcCandidates();
+  const ethOwn = String(process.env.ETH_RPC || "").split(",").map((u) => u.trim()).filter(Boolean);
+  const solOwn = String(process.env.SOLANA_RPC || "").split(",").map((u) => u.trim()).filter(Boolean);
+
+  /* Probing your own endpoints is the point; the public fallbacks are only
+     probed when there are no others, so this stays a handful of requests. */
+  const ethProbeList = ethOwn.length ? ethOwn : ethUrls.slice(0, 1);
+  const solProbeList = solOwn.length ? solOwn : solUrls.slice(0, 1);
+  const [ethProbes, solProbes, float] = await Promise.all([
+    Promise.all(ethProbeList.map(probeEth)),
+    Promise.all(solProbeList.map(probeSol)),
+    /* A float reading needs a live node, and the address does not. When the
+       node is the thing that is broken, the operator still has to be told
+       WHERE to send the ether — so the address survives the failure. */
+    floatHealth().catch((e) => ({
+      sponsored: !!S.gasSponsorKey,
+      address: S.gasSponsorKey ? new ethers.Wallet(S.gasSponsorKey).address : undefined,
+      error: scrubUrls(e.message || e),
+    })),
+  ]);
+
+  const verdict = (own, probes) => {
+    if (!own.length) return "using the public endpoints — set your own before any real traffic";
+    if (probes.every((r) => r.ok)) return "your endpoint answered";
+    if (probes.some((r) => r.ok)) return "one of your endpoints is down; the rest answered";
+    return "your endpoint did NOT answer — the rail is silently running on public nodes";
+  };
+
+  return {
+    ethRpc: { configured: ethOwn.length, endpoints: ethProbes, verdict: verdict(ethOwn, ethProbes) },
+    solanaRpc: { configured: solOwn.length, endpoints: solProbes, verdict: verdict(solOwn, solProbes) },
+    /* floatHealth already reports the address, the balance and whether it
+       covers a job; the key itself is never echoed anywhere. */
+    gasSponsor: float,
+    solRail: solRail(),
+  };
+}
+
 module.exports = {
   configure, enable, status, start, resume, reset, quoteFor,
   prepareTapOps, onTapDone, transitFor, job, publicJob,
@@ -1806,4 +1907,6 @@ module.exports = {
   _gasDecision: gasDecision,
   /* the sponsor float: what it holds against what it needs, for the operator */
   floatHealth,
+  /* did ETH_RPC / SOLANA_RPC / ETH_GAS_SPONSOR_KEY actually take? */
+  railHealth,
 };
