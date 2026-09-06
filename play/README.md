@@ -95,10 +95,20 @@ release can go out.
 https://wallet.usekoinos.com/privacy
 ```
 
-### Data deletion URL  (Data safety → "Add a link…")
+### Deletion URLs — the SAME page answers both questions
+Play asks twice, for two different things. Give this URL to both:
 ```
 https://wallet.usekoinos.com/delete-account
 ```
+- *"request that their account and associated data is deleted"* → the page's
+  first section, the three steps.
+- *"request that SOME OR ALL of their data is deleted, WITHOUT requiring them
+  to delete their account"* → **Yes**, and the same URL: the page has a
+  separate section for partial deletion (the email address, finished
+  conversion history, a retired passkey ID), each with its own steps.
+
+Do not answer "No, but user data is automatically deleted within 90 days" —
+records are kept for as long as the account exists, so that would be false.
 
 Both pages ship with the site and need no sign-in. The deletion page is
 built against Play's three requirements: it names the app in the heading,
