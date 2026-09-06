@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Delete your account and data — Koinos Bio Wallet</title>
+<meta name="description" content="How to have the records Koinos Bio Wallet holds about your account deleted, what gets deleted, and what cannot be.">
+<meta name="theme-color" content="#121212">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="/css/wallet.css">
+<link rel="icon" href="/assets/icon-192.png">
+<style>
+  .doc { max-width: 720px; margin: 0 auto; padding: 32px 20px 96px; }
+  .doc h1 { font-size: 28px; margin: 0 0 4px; }
+  .doc .updated { color: var(--dim); font-size: 13px; margin: 0 0 28px; }
+  .doc h2 { font-size: 18px; margin: 32px 0 8px; }
+  .doc p, .doc li { line-height: 1.6; }
+  .doc ul, .doc ol { padding-left: 20px; }
+  .doc a { color: var(--accent); }
+  .doc .lede { font-size: 17px; }
+  .card { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04);
+          border-radius: 14px; padding: 18px 20px; margin: 18px 0; }
+  .card.warn { border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.07); }
+  /* `.doc a` outranks `.btn` on specificity, so without naming the anchor the
+     label renders accent-on-accent and the button reads as an empty pill. */
+  .doc a.btn { display: inline-block; margin-top: 6px; padding: 12px 20px; border-radius: 999px;
+         background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+</style>
+</head>
+<body>
+<main class="doc">
+  <h1>Delete your Koinos Bio Wallet account and data</h1>
+  <p class="updated">Koinos Bio Wallet · usekoinos.com · last updated 6 September 2026</p>
+
+  <h2 style="margin-top:8px">How to request deletion — 3 steps</h2>
+  <div class="card">
+    <ol style="margin:0">
+      <li><strong>Move your funds out first</strong> if you want to keep them
+        (see the warning below — your wallet is not ours to delete).</li>
+      <li><strong>Email <a href="mailto:support@usekoinos.com">support@usekoinos.com</a></strong>
+        with the subject <em>Delete my account</em>, and include your Koinos
+        account address — the one at the top of the wallet screen, starting
+        with <span class="mono">1</span>.</li>
+      <li><strong>We confirm by reply and delete within 30 days.</strong></li>
+    </ol>
+    <p style="margin-top:14px">
+      <a class="btn" href="mailto:support@usekoinos.com?subject=Delete%20my%20account%20and%20data&body=Please%20delete%20the%20records%20you%20hold%20for%20my%20Koinos%20Bio%20Wallet%20account.%0A%0AMy%20Koinos%20account%20address%3A%20%0A%0A(You%20can%20copy%20this%20from%20the%20top%20of%20the%20wallet%20screen.)">Email a deletion request</a>
+    </p>
+  </div>
+
+  <div class="card warn">
+    <strong>Deleting our records does not delete your wallet.</strong>
+    <p style="margin-top:8px">Your Koinos account is a smart contract on the
+    blockchain, controlled by the passkey on your device. It is not ours to
+    delete, and removing our records does not move, freeze or return any funds.
+    <strong>Move your KOIN and NFTs somewhere else first</strong> if you want
+    them — otherwise they stay in an account you still control but that we no
+    longer have any record of.</p>
+  </div>
+
+  <h2>What is deleted, what is kept</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:15px">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid rgba(255,255,255,.18)">
+        <th style="padding:8px 8px 8px 0">Data</th>
+        <th style="padding:8px">Outcome</th>
+        <th style="padding:8px">Retention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid rgba(255,255,255,.08)">
+        <td style="padding:10px 8px 10px 0">Koinos account address and public key</td>
+        <td style="padding:10px 8px">Deleted</td>
+        <td style="padding:10px 8px">Within 30 days</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,.08)">
+        <td style="padding:10px 8px 10px 0">Passkey credential IDs (public identifiers only)</td>
+        <td style="padding:10px 8px">Deleted</td>
+        <td style="padding:10px 8px">Within 30 days</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,.08)">
+        <td style="padding:10px 8px 10px 0">Conversion records — deposit addresses, amounts, transaction hashes</td>
+        <td style="padding:10px 8px">Deleted</td>
+        <td style="padding:10px 8px">Within 30 days</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,.08)">
+        <td style="padding:10px 8px 10px 0">Email address given to send tokens to, and its delivery records</td>
+        <td style="padding:10px 8px">Deleted</td>
+        <td style="padding:10px 8px">Within 30 days</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,.08)">
+        <td style="padding:10px 8px 10px 0">Encrypted server backups containing the above</td>
+        <td style="padding:10px 8px">Aged out automatically</td>
+        <td style="padding:10px 8px"><strong>Up to 30 further days</strong>, then gone</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 8px 10px 0">Blockchain transactions (Koinos, Ethereum, Solana)</td>
+        <td style="padding:10px 8px"><strong>Cannot be deleted</strong></td>
+        <td style="padding:10px 8px">Permanent and public</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>We collect no name, phone number, contacts, location, photos, analytics or
+  advertising identifiers, so there is nothing of that kind to delete. After the
+  backup window above, no copy of your records remains.</p>
+
+  <h2>What cannot be deleted, by anyone</h2>
+  <p>Transactions already recorded on the Koinos, Ethereum or Solana
+  blockchains are permanent and public. No one can remove them — not us, not
+  you, not the people who run those networks. That is how a blockchain works,
+  and it is worth knowing before you start rather than after.</p>
+
+  <h2>Removing the app from a device</h2>
+  <p>To sign out on one device without deleting anything, open the wallet,
+  go to <strong>Security</strong> and choose <strong>Sign out of this
+  device</strong>. That forgets the passkey locally; your account and funds are
+  untouched, and you can sign in again on any device that holds one of your
+  passkeys.</p>
+
+  <h2>Questions</h2>
+  <p><a href="mailto:support@usekoinos.com">support@usekoinos.com</a> ·
+     <a href="/privacy">Privacy policy</a></p>
+
+  <p style="margin-top:36px"><a href="/">← Back to the wallet</a></p>
+</main>
+</body>
+</html>

@@ -731,7 +731,13 @@ const CSP = [
 const PUBLIC_DIR = path.join(__dirname, 'public');
 /* /privacy is a real URL because Google Play requires a reachable privacy
    policy before an app can be published, and a 404 there blocks the listing. */
-const PAGES = { '/': 'index.html', '/privacy': 'privacy.html' };
+const PAGES = {
+  '/': 'index.html',
+  '/privacy': 'privacy.html',
+  /* Google Play requires a public page where an account and its data can be
+     asked for deletion, reachable without signing in. */
+  '/delete-account': 'delete-account.html',
+};
 
 /* Code assets must never outlive a deploy (a stale css against fresh js
    renders a broken hybrid) — they revalidate every load, and served HTML

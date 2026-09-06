@@ -94,7 +94,18 @@ release can go out.
 ```
 https://wallet.usekoinos.com/privacy
 ```
-Live now — that page ships with the site.
+
+### Data deletion URL  (Data safety → "Add a link…")
+```
+https://wallet.usekoinos.com/delete-account
+```
+
+Both pages ship with the site and need no sign-in. The deletion page is
+built against Play's three requirements: it names the app in the heading,
+leads with the three steps in a boxed callout before anything else, and
+gives a table of every data type with its outcome and retention — deleted
+within 30 days, encrypted backups ageing out up to 30 days after that, and
+blockchain transactions marked as permanently undeletable by anyone.
 
 ### Sign in details  (was called "App access")
 
