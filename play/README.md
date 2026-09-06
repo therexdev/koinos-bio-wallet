@@ -171,14 +171,19 @@ This is a long form. The truthful answers:
 
 Data types to declare:
 
-| Type | Collected | Shared | Purpose | Required? |
-|---|---|---|---|---|
-| **Financial info → Other financial info** (wallet address, on-chain balances) | Yes | No | App functionality | Required |
-| **Personal info → Email address** | Yes | No | App functionality | Optional — only if the user sends to an email |
+| Type | Collected | Shared | Purpose | Required? | Ephemeral? |
+|---|---|---|---|---|---|
+| **Financial info → Other financial info** (wallet address, on-chain balances) | Yes | No | App functionality | Required | **No** |
 
-Declare **nothing else**. No name, no location, no contacts, no photos, no
-messages, no analytics identifiers, no advertising ID, no device IDs — none of
-those are collected. There are no third-party SDKs in this app.
+That is the ONLY type. Not email — this app has no email input and no email
+handling (`grep -i email server.js tools/` is empty; the send-to-an-address
+feature is in the gateway site, a different app). No name, no location, no
+contacts, no photos, no messages, no analytics identifiers, no advertising ID,
+no device IDs. There are no third-party SDKs in this app.
+
+**"Is this data processed ephemerally?" → No.** Ephemeral means memory only.
+The account record and any conversion job are written to disk —
+`tools/veive.js:62` and `tools/funding.js:211` — so they outlive the request.
 
 ### Government apps
 **No.**
