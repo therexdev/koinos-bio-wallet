@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Signing, start to finish, with nothing for a human to copy.
+#
+#   bash android/tools/setup-signing.sh
+#
+# Every failure this replaces was a copy-paste failure: 5,700 characters of
+# base64 dragged out of a wrapped terminal line (a short copy decodes with no
+# error at all and yields a corrupt keystore), and a password picked up with
+# a trailing newline. So nothing is copied. The key is made here and the four
+# secrets are written straight to GitHub with `gh`, which a codespace already
+# has signed in.
+set -euo pipefail
+
+REPO=${REPO:-therexdev/koinos-bio-wallet}
+KEY=${ANDROID_KEYSTORE_FILE:-$HOME/koinos-bio-wallet-release.jks}
+PWFILE="$HOME/.koinos-bio-wallet-keystore-password"
+ALIAS=biowallet
+
+command -v keytool >/dev/null || { echo "keytool not found: install a JDK 17+." >&2; exit 1; }
+command -v gh >/dev/null || {
+  echo "The 'gh' command is not here. This script is meant to be run in a GitHub" >&2
+  echo "codespace, where gh is installed and already signed in." >&2
+  exit 1
+}
+
+# Writing secrets needs more than the token a codespace starts with.
+if ! gh secret list --repo "$REPO" >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+gh cannot write secrets for this repository yet. Run this once:
+
+    gh auth refresh -h github.com -s repo
+
+It prints a code and a URL: open the URL, type the code, approve. Then run
+this script again.
+MSG
+  exit 1
+fi
+
+# An existing key is only worth keeping if its password is known and works.
+# Nothing is published to Play yet, so a key that cannot be opened is not a
+# disaster to replace — it is only a disaster AFTER the first upload.
+reuse=false
+if [ -f "$KEY" ] && [ -f "$PWFILE" ]; then
+  PW=$(tr -d '[:space:]' < "$PWFILE")
+  if keytool -list -keystore "$KEY" -storepass "$PW" >/dev/null 2>&1; then
+    reuse=true
+    echo "Reusing the key at $KEY (its password checks out)."
+  else
+    echo "The key at $KEY does not open with the saved password."
+  fi
+fi
+
+if [ "$reuse" = false ]; then
+  if [ -f "$KEY" ]; then
+    mv "$KEY" "$KEY.replaced-$(date +%s)"
+    echo "Moved the old key aside (nothing is published to Play, so it is not needed)."
+  fi
+  PW=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+  keytool -genkeypair -v -keystore "$KEY" -alias "$ALIAS" -keyalg RSA -keysize 4096 \
+    -validity 10000 -storepass "$PW" -keypass "$PW" \
+    -dname "CN=Koinos Bio Wallet, O=usekoinos.com, C=US" >/dev/null
+  chmod 600 "$KEY"
+  printf '%s' "$PW" > "$PWFILE"; chmod 600 "$PWFILE"
+  echo "Made a new signing key at $KEY."
+fi
+
+# Straight from the file to the secret. No terminal, no selection, no paste.
+B64=$(mktemp); trap 'rm -f "$B64"' EXIT
+base64 -w0 "$KEY" > "$B64" 2>/dev/null || base64 "$KEY" | tr -d '\n' > "$B64"
+gh secret set ANDROID_KEYSTORE_BASE64   --repo "$REPO" < "$B64"
+printf '%s' "$PW"    | gh secret set ANDROID_KEYSTORE_PASSWORD --repo "$REPO"
+printf '%s' "$PW"    | gh secret set ANDROID_KEY_PASSWORD      --repo "$REPO"
+printf '%s' "$ALIAS" | gh secret set ANDROID_KEY_ALIAS         --repo "$REPO"
+
+# Prove the round trip locally, so CI is not the first thing to find out.
+RT=$(mktemp); trap 'rm -f "$B64" "$RT"' EXIT
+tr -d '[:space:]' < "$B64" | base64 -d > "$RT"
+cmp -s "$KEY" "$RT" || { echo "The base64 did not round-trip. Stopping." >&2; exit 1; }
+keytool -list -keystore "$RT" -storepass "$PW" >/dev/null
+
+FP=$(keytool -list -v -keystore "$KEY" -storepass "$PW" -alias "$ALIAS" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
+
+cat <<TXT
+
+================================================================
+ All four secrets are set. Nothing to copy.
+================================================================
+$(gh secret list --repo "$REPO" | grep ANDROID_ || true)
+
+The base64 was checked back into an identical keystore before sending,
+so a short or mangled value is not possible this time.
+
+NEXT — build it:
+  https://github.com/$REPO/actions/workflows/android.yml
+  "Run workflow" -> Run. The .aab for Play lands on:
+  https://github.com/$REPO/releases/tag/android-latest
+
+BACK IT UP once the app is on Play (until then a new key costs nothing):
+  key      $KEY
+  password $PWFILE
+Download both from the Explorer after:  cp "$KEY" "$PWFILE" .
+and delete the copies afterwards. Losing them AFTER publishing means the
+app can never be updated.
+
+Signing certificate SHA-256 (not secret; for assetlinks):
+$FP
+
+TXT

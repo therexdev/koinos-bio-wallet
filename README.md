@@ -340,7 +340,35 @@ For a real key, make one **once** and keep it forever — losing it means a new
 app identity on every phone, and an app on Play that can never be updated
 again.
 
-### Making the signing key, with no terminal on your computer
+### Signing, in one command
+
+In a codespace (Code → Codespaces → Create codespace on main):
+
+```bash
+bash android/tools/setup-signing.sh
+```
+
+It makes the key if there isn't a usable one, then writes all four secrets
+to GitHub itself with `gh` — nothing is copied by hand, which is where every
+previous attempt failed: 5,700 characters of base64 dragged out of a wrapped
+terminal line (a short copy decodes with no error and yields a corrupt
+keystore), and a password that arrived with a trailing newline. It decodes
+its own base64 back into an identical keystore before sending, so CI is never
+the first thing to discover a bad value.
+
+If `gh` lacks permission to write secrets it says so and prints the one-time
+`gh auth refresh -h github.com -s repo` to fix it.
+
+**A new key is free until the first Play upload.** Only after the app is
+published does the key become permanent — before that, a key whose password
+is lost is replaced rather than recovered, and the script does exactly that.
+Back up `~/koinos-bio-wallet-release.jks` and
+`~/.koinos-bio-wallet-keystore-password` once you have published.
+
+The manual route below still works and is what to read if you want to know
+what the script is doing.
+
+### Making the signing key by hand
 
 You need a shell, and GitHub gives you one in the browser. Nothing is
 installed locally.
