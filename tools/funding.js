@@ -62,6 +62,7 @@ const { fetchEthDepositRecord, isRedeemable, weiToVethSats } = require("./eth/br
 const { opCompleteTransfer, DEFAULT_REDEEM_RC } = require("./eth/koinos-bridge");
 const koindx = require("./eth/koindx");
 const U = require("./eth/units");
+const fees = require("./eth/fees");
 /* Route S. Its packages are optional at boot: without them the wallet runs
    exactly as before and the rail reports itself off (see solRail). */
 const SC = require("./sol/sol-constants");
@@ -94,6 +95,8 @@ const S = {
   gasSponsorKey: (process.env.ETH_GAS_SPONSOR_KEY || "").trim(),
   gasTopupEth: process.env.ETH_GAS_TOPUP || "0.0015",
   gasMinEth: process.env.ETH_GAS_MIN || "0.0012",
+  /* What the platform charges, and where token-denominated fees accrue. */
+  fee: fees.config(),
   /* Route S */
   maxSol: process.env.FUND_MAX_SOL || "0.5",
   /* Ethereum gas sets the real floor for a Solana deposit — below this the
@@ -115,7 +118,8 @@ const ETH_STATES = new Set([
   "front_gas", "approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt",
   "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge",
   "bridge_token", "deposit_eth",
-  "wh_redeem", // Route S: hand the Wormhole VAA to Ethereum's token bridge
+  "wh_redeem", // Routes S and T: take delivery of what Wormhole holds
+  "collect_fee", // the conversion fee, in whatever this route is holding
 ]);
 /* States the server drives with the Solana transit key (Routes S and T). */
 const SOL_STATES = new Set(["sol_swap", "sol_bridge", "awaiting_vaa"]);
@@ -253,6 +257,21 @@ const solFloor = () => SU.formatSol(SU.parseSol(S.solReserve) + SU.parseSol(S.mi
     1e10 wei of ether. */
 const WEI_PER_WORMHOLE_UNIT = 10n ** 10n;
 const wormholeUnitsToWei = (units) => BigInt(units) * WEI_PER_WORMHOLE_UNIT;
+
+/** What this job has cost the sponsor so far, in wei — measured from real
+    receipts, never estimated, because it is what the fee recovers. */
+const sponsorSpent = (j) => BigInt(j.sponsorWei || 0);
+const addSponsorSpend = (j, wei) => ({ ...j, sponsorWei: (sponsorSpent(j) + BigInt(wei)).toString() });
+/** The gas a confirmed transaction actually burned. */
+const gasSpent = (r) => BigInt(r.gasUsed || 0) * BigInt(r.gasPrice || r.effectiveGasPrice || 0);
+
+/** Ether fees go back to the sponsor, because that is the float they refill.
+    Token fees accrue wherever FUND_FEE_TREASURY points, or the sponsor. */
+function feeRecipient() {
+  if (S.fee.treasury) return S.fee.treasury;
+  if (S.gasSponsorKey) return new ethers.Wallet(S.gasSponsorKey).address;
+  return null;
+}
 
 /** Who submits the Wormhole redeem — the one step that has to be paid for
     before the deposit's own ether exists. The sponsor normally; a transit
@@ -665,9 +684,13 @@ async function start(account, { asset, amount, route } = {}) {
     }
     if (chosen.id === "C") {
       const usdtBefore = (await swap.balanceOf(p, RC.USDT, t.ethAddress)).toString();
+      /* An ETH deposit holds ether from the start, so its fee comes out of
+         that — one transfer, straight back into the sponsor float. */
+      const priced = await priceFee({ ...common, route: "C" }, { p, value: amt, token: "eth", next: "swap_eth_usdt" });
+      const net = amt - BigInt(priced.feeAmount || 0);
       saveJob(account, {
-        ...common, route: "C", status: "swap_eth_usdt",
-        amountEth, amountWei: amt.toString(),
+        ...priced,
+        amountEth: ethers.formatEther(net), amountWei: net.toString(),
         amountLabel: amountEth + " ETH",
         usdtBefore, estKoinOut: chosen.koinOut,
       });
@@ -991,6 +1014,33 @@ async function advanceEth(account, j) {
       const { hash } = await swap.sendTx(redeemer.wallet, wormhole.buildCompleteTransferTx(j.vaa, { unwrap: toEther }));
       return saveJob(account, { ...j, pendingTx: hash, redeemSponsored: redeemer.sponsored || undefined, ...(toEther ? { ethBefore: before } : { vkoinBefore: before }) });
     }
+    case "collect_fee": {
+      /* Taken in whatever this route is already holding, so no swap is added
+         for it: ether where the deposit became ether, otherwise the token in
+         hand. Ether goes straight back to the sponsor and refills the float;
+         tokens accrue and are converted in one batch later, because per job
+         that swap costs about as much as it recovers. */
+      const to = feeRecipient();
+      const amount = BigInt(j.feeAmount || 0);
+      if (!to || amount <= 0n) return saveJob(account, { ...j, status: j.afterFee, afterFee: undefined });
+      if (j.feeToken === "eth") {
+        const have = await p.getBalance(wallet.address);
+        const reserve = await gasReserveWei();
+        /* Never let the fee eat the gas the rest of the route still needs. */
+        const send = have > reserve + amount ? amount : (have > reserve ? have - reserve : 0n);
+        if (send <= 0n) return saveJob(account, { ...j, status: j.afterFee, afterFee: undefined, feeSkipped: "not enough ether left" });
+        const sent = await wallet.sendTransaction({ to, value: send });
+        return saveJob(account, { ...j, pendingTx: sent.hash, feePaidWei: send.toString() });
+      }
+      /* A token fee: the same value, priced through the same quoter the route
+         uses, transferred to the treasury. */
+      const token = j.feeToken === "usdt" ? RC.USDT : RC.VKOIN;
+      const held = await swap.balanceOf(p, token, wallet.address);
+      const send = amount < held ? amount : held;
+      if (send <= 0n) return saveJob(account, { ...j, status: j.afterFee, afterFee: undefined, feeSkipped: "nothing to take it from" });
+      const { hash } = await swap.sendTx(wallet, swap.buildTransferTx(token, to, send));
+      return saveJob(account, { ...j, pendingTx: hash, feePaidUnits: send.toString() });
+    }
     case "approve_bridge": {
       const bridgeAddr = require("./eth/bridge-constants").BRIDGE[S.network].ethBridge;
       const cur = await swap.allowance(p, RC.VKOIN, wallet.address, bridgeAddr);
@@ -1037,17 +1087,25 @@ async function onEthConfirmed(account, j, r) {
   const wallet = await transitWallet(account);
   const p = wallet.provider;
   const confirmedHash = j.pendingTx;
-  const base = { ...j, pendingTx: null };
+  let base = { ...j, pendingTx: null };
   switch (j.status) {
-    case "front_gas":
-      return saveJob(account, { ...base, status: j.afterGas, afterGas: undefined });
+    case "front_gas": {
+      /* The top-up left the sponsor's pocket, and so did its gas. */
+      const spent = ethers.parseEther(S.gasTopupEth) + gasSpent(r);
+      return saveJob(account, { ...addSponsorSpend(base, spent), status: j.afterGas, afterGas: undefined });
+    }
     case "approve_v3_usdc":
       return saveJob(account, { ...base, status: "swap_usdc_usdt" });
     case "swap_usdc_usdt":
     case "swap_eth_usdt": {
       const got = await deliveredBy(p, r, RC.USDT, wallet.address, j.usdtBefore);
       if (got <= 0n) throw new Error(`${j.status === "swap_eth_usdt" ? "ETH" : "USDC"}→USDT swap produced no USDT`);
-      return saveJob(account, { ...base, status: "approve_permit2", usdtSats: got.toString() });
+      const withUsdt = { ...base, status: "approve_permit2", usdtSats: got.toString() };
+      /* A stablecoin deposit never holds ether of its own, so its fee is taken
+         here, in the USDT it is carrying, and swapped back to ether in a batch
+         when that is worth the gas. An ETH deposit already paid at the start. */
+      if (j.asset === "eth") return saveJob(account, withUsdt);
+      return saveJob(account, await priceFee(withUsdt, { p, value: got, token: "usdt", next: "approve_permit2" }));
     }
     case "approve_permit2":
       return saveJob(account, { ...base, status: "approve_ur" });
@@ -1059,6 +1117,8 @@ async function onEthConfirmed(account, j, r) {
       return saveJob(account, { ...base, status: "approve_bridge", vkoinSats: got.toString() });
     }
     case "wh_redeem": {
+      /* If the sponsor submitted it, that gas is this job's to repay. */
+      if (j.redeemSponsored) { j = addSponsorSpend(j, gasSpent(r)); base = { ...base, sponsorWei: j.sponsorWei }; }
       if (j.route === "T") {
         /* Native ether arrived: no log to read, so measure the balance at the
            block the redeem landed in. */
@@ -1069,7 +1129,19 @@ async function onEthConfirmed(account, j, r) {
       const got = await deliveredBy(p, r, RC.VKOIN, wallet.address, j.vkoinBefore);
       if (got <= 0n) throw new Error("The Wormhole redeem delivered no vKOIN");
       const next = await gasBeforeStep(j, p, wallet, "approve_bridge");
-      return saveJob(account, { ...base, ...next, vkoinSats: got.toString() });
+      const withVkoin = { ...base, ...next, vkoinSats: got.toString() };
+      /* Nothing here is ether, so the fee is taken in vKOIN and converted in
+         a batch later. Only once the gas step is out of the way. */
+      if (withVkoin.status !== "approve_bridge") return saveJob(account, withVkoin);
+      return saveJob(account, await priceFee(withVkoin, { p, value: got, token: "vkoin", next: "approve_bridge" }));
+    }
+    case "collect_fee": {
+      /* Whatever left as the fee is no longer this job's to convert. */
+      const paid = BigInt(j.feePaidUnits || 0);
+      const out = { ...base, status: j.afterFee, afterFee: undefined };
+      if (paid > 0n && j.feeToken === "usdt") out.usdtSats = String(BigInt(j.usdtSats || 0) - paid);
+      if (paid > 0n && j.feeToken === "vkoin") out.vkoinSats = String(BigInt(j.vkoinSats || 0) - paid);
+      return saveJob(account, out);
     }
     case "approve_bridge":
       return saveJob(account, { ...base, status: "bridge_token" });
@@ -1184,6 +1256,39 @@ async function onSolConfirmed(account, j) {
   }
 }
 
+/** The fee, expressed in the token a route is holding. Priced through the
+    same quoters the route itself uses, so it tracks the market it is taken
+    from rather than a stale figure. */
+async function feeInToken(p, kind, feeWei) {
+  const amountEth = ethers.formatEther(feeWei);
+  if (kind === "usdt") return BigInt((await ethSwap.quoteUsdtOut({ amountWei: feeWei, provider: p })).usdt);
+  if (kind === "vkoin") return BigInt((await ethSwap.quoteEthToVkoin({ amountEth, slippageBps: 0, provider: p })).koinOut);
+  throw new Error(`no price for a ${kind} fee`);
+}
+
+/** Decide this job's fee, in the units of whatever it will be taken from, and
+    put it on the job so every later step and the card agree on one number.
+
+    The arithmetic in tools/eth/fees.js is unit-agnostic, so a token fee is
+    priced natively: the sponsor's ether cost is converted into that token
+    through the same forward quoter the route uses, and the percentage is
+    simply a share of what is being converted. No reverse quote is needed. */
+async function priceFee(j, { p, value, token, next }) {
+  const skip = (why) => ({ ...j, status: next, feeAmount: "0", feeToken: undefined, afterFee: undefined, ...(why ? { feeSkipped: why } : {}) });
+  if (!feeRecipient()) return skip("no fee recipient configured");
+  let sponsorCost = sponsorSpent(j);
+  let transfer = await gasCostWei(60000n);
+  if (token !== "eth") {
+    try {
+      if (sponsorCost > 0n) sponsorCost = await feeInToken(p, token, sponsorCost);
+      transfer = await feeInToken(p, token, transfer);
+    } catch (_) { return skip("no price for the fee right now"); }
+  }
+  const { fee } = fees.feeWei({ sponsorWei: sponsorCost, valueWei: BigInt(value), cfg: S.fee });
+  if (!fees.worthCollecting(fee, transfer)) return skip("smaller than the transfer that would carry it");
+  return { ...j, status: "collect_fee", afterFee: next, feeAmount: fee.toString(), feeToken: token };
+}
+
 /** Route T's handoff: the ether that arrived, less what the Ethereum legs
     will burn, becomes Route C's input. Called once the redeem is known to
     have happened, from either the step or its receipt. */
@@ -1206,9 +1311,14 @@ async function handOffToRouteC(account, j, p, wallet, extra = {}) {
     throw new Error(`The ether from Wormhole (${short(ethers.formatEther(usable))}) does not cover the Ethereum gas this route still needs (about ${short(ethers.formatEther(reserve))}) — convert a larger amount, or send a little ETH to the Ethereum deposit address and Retry`);
   }
   const usdtBefore = (await swap.balanceOf(p, RC.USDT, wallet.address)).toString();
+  /* The fee comes out of the ether the bridge just released — the one moment
+     this route holds any — so nothing extra is swapped to pay it. */
+  const priced = await priceFee({ ...j, ...fields }, { p, value: spend, token: "eth", next: "swap_eth_usdt" });
+  const fee = BigInt(priced.feeAmount || 0);
+  const net = spend > fee ? spend - fee : spend;
   return saveJob(account, {
-    ...j, ...fields, status: "swap_eth_usdt", pendingTx: null,
-    amountWei: spend.toString(), amountEth: ethers.formatEther(spend),
+    ...priced, pendingTx: null,
+    amountWei: net.toString(), amountEth: ethers.formatEther(net),
     ethArrivedWei: usable.toString(), gasHeldWei: reserve.toString(), usdtBefore,
   });
 }
@@ -1472,11 +1582,11 @@ function demoStart(account, asset, amt, route) {
   });
   return publicJob(job(account));
 }
-const DEMO_FLOW_C = ["approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
+const DEMO_FLOW_C = ["approve_v3_usdc", "swap_usdc_usdt", "swap_eth_usdt", "collect_fee", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 const DEMO_FLOW_B = ["deposit_eth", "awaiting_signatures", "awaiting_redeem"];
-const DEMO_FLOW_S = ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
+const DEMO_FLOW_S = ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "collect_fee", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 /* Route T rejoins route C at the ETH swap, because that is what it now holds. */
-const DEMO_FLOW_T = ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
+const DEMO_FLOW_T = ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "collect_fee", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem"];
 async function demoAdvance(account, j) {
   if (j.status === "awaiting_redeem") { finishRedeem(account, "0xdemo-redeem"); return; }
   const flow = j.route === "B" ? DEMO_FLOW_B : j.route === "S" ? DEMO_FLOW_S : j.route === "T" ? DEMO_FLOW_T : DEMO_FLOW_C;
@@ -1516,6 +1626,7 @@ async function status(account) {
     caps: { eth: S.maxEth, stable: S.maxStable, sol: S.maxSol },
     solMin: S.minSol, solFloor: solFloor(),
     gasMinEth: S.gasMinEth, gasFronting: !!S.gasSponsorKey,
+    feePct: S.fee.ratePct,
     slippageBps: S.slippageBps,
   };
   /* Balances always (so the card can show what the address holds, zeros

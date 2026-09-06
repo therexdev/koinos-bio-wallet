@@ -38,6 +38,7 @@ const Fund = (() => {
     approve_bridge: 'Approving the Vortex bridge…',
     bridge_token: 'Bridging vKOIN → Koinos (Vortex, 1:1)…',
     deposit_eth: 'Depositing ETH into the Vortex bridge…',
+    collect_fee: 'Taking the conversion fee…',
     /* The Solana routes (S and T) — see stepLabel for the wording, which
        depends on what the SOL was swapped into. */
     awaiting_vaa: 'Wormhole guardians are signing (usually 1–2 minutes)…',

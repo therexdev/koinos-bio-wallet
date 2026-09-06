@@ -206,9 +206,9 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.strictEqual(j0.amountLabel, "0.2 SOL");
     assert.ok(j0.estFeeEth, "the job records what it expects to pay in fees");
     const seen = [j0.status];
-    for (let i = 0; i < 16 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seen.push(funding.job(ACCT).status); }
-    assert.deepStrictEqual(seen, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
-      "route T: Solana legs, the Wormhole redeem, then Route C's tail — no passkey tap needed");
+    for (let i = 0; i < 20 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seen.push(funding.job(ACCT).status); }
+    assert.deepStrictEqual(seen, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "collect_fee", "swap_eth_usdt", "approve_permit2", "approve_ur", "swap_usdt_vkoin", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
+      "route T: Solana legs, the redeem, the fee, then Route C's tail — no passkey tap needed");
     const done = funding.job(ACCT);
     assert.strictEqual(done.koinReceived, done.estKoinOut);
     assert.strictEqual((await funding.status(ACCT)).balances.sol, "0.15", "the swapped SOL left the deposit address");
@@ -218,9 +218,9 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     const j1 = await funding.start(ACCT, { asset: "sol", amount: "0.1", route: "S" });
     assert.strictEqual(j1.route, "S");
     const seenS = [j1.status];
-    for (let i = 0; i < 12 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seenS.push(funding.job(ACCT).status); }
-    assert.deepStrictEqual(seenS, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
-      "route S skips the Ethereum swaps: its vKOIN goes straight to Vortex");
+    for (let i = 0; i < 16 && funding.job(ACCT).status !== "done"; i++) { await funding.tick(); seenS.push(funding.job(ACCT).status); }
+    assert.deepStrictEqual(seenS, ["sol_swap", "sol_bridge", "awaiting_vaa", "wh_redeem", "collect_fee", "approve_bridge", "bridge_token", "awaiting_signatures", "awaiting_redeem", "done"],
+      "route S skips the Ethereum swaps: its vKOIN pays the fee then goes to Vortex");
     console.log("✓ demo: route T wins on price and walks its full flow; route S still runs when asked");
   }
 

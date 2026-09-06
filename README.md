@@ -194,6 +194,32 @@ min-out; a mid-flow failure leaves funds in a plain ERC-20 the flow retries
 from. The rail runs live only on mainnet (`KOINOS_NETWORK=mainnet` with the
 chain configured) — everywhere else the card simulates.
 
+### Paying for itself
+
+The gas sponsor covers what a deposit cannot: a top-up when the deposit
+address holds no ether, and the Wormhole redeem, which must happen *before* a
+Solana deposit has any ether of its own. Left alone that float only drains, so
+every job carries a fee that refills it:
+
+    fee = what the sponsor actually spent on this job (measured from the
+          receipts, plus FUND_FEE_BUFFER_PCT) + FUND_FEE_PCT of the conversion
+
+The first part keeps the float level; the second is the margin. A cap
+(`FUND_FEE_MAX_PCT`) means a gas spike is the platform's problem rather than
+something that eats a quarter of someone's deposit, and a fee smaller than the
+transfer carrying it is skipped rather than paid.
+
+**It is taken in whatever the route is already holding, so nothing extra is
+swapped for it.** Route T and ETH deposits pay in ether the moment they hold
+some — one transfer, straight back into the sponsor, and the float is refilled
+immediately. A stablecoin deposit pays in the USDT it is carrying; route S
+pays in vKOIN. Those accrue to `FUND_FEE_TREASURY` and are converted to ether
+in one batch later, because per job that swap costs about as much as it
+recovers — at 5 gwei it returns about $1.39 of a $5.55 top-up, and above 10
+gwei it loses money. Batched over roughly a dozen jobs the same swap is a few
+percent. `node tests/fees.test.js` pins the arithmetic, in ether and in a
+token's units.
+
 ## The app: one screen, three tabs
 
 The wallet is laid out like a phone wallet and installs as one (manifest,
@@ -394,6 +420,11 @@ node server.js
 | `SOLANA_RPC` | *(public list)* | Solana RPC endpoint(s), comma-separated by priority — the public one is rate-limited, set your own |
 | `JUPITER_API` | *(lite, keyless)* | Jupiter swap API base; set with `JUPITER_API_KEY` for the keyed `api.jup.ag` tier |
 | `JUPITER_API_KEY` | — | Jupiter API key (optional) |
+| `FUND_FEE_PCT` | `1` | conversion fee, as a percentage of the amount |
+| `FUND_FEE_BUFFER_PCT` | `20` | added on top of the sponsor's measured cost, for the gas the recovery itself burns |
+| `FUND_FEE_MAX_PCT` | `25` | the fee never takes more than this share of a conversion, whatever gas did |
+| `FUND_FEE_TREASURY` | *(the sponsor)* | where token-denominated fees accrue; ether fees always go to the sponsor |
+| `FUND_FEE_SWEEP_MULTIPLE` | `12` | accrued tokens are converted to ether only once they are worth this many times the swap's own gas |
 | `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
 | `FUND_MIN_SOL` | `0.05` | smallest SOL swap the rail accepts (Ethereum gas sets the floor) |
 | `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |

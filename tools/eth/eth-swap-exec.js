@@ -24,6 +24,7 @@ const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
   "function decimals() view returns (uint8)",
+  "function transfer(address to, uint256 amount) returns (bool)",
 ];
 function erc20(provider, token) {
   return new ethers.Contract(token, ERC20_ABI, provider);
@@ -60,6 +61,13 @@ function receivedInTx(receipt, token, owner) {
 async function allowance(provider, token, owner, spender) {
   return await erc20(provider, token).allowance(owner, spender);
 }
+/** A plain ERC-20 transfer — how a token-denominated fee reaches the treasury
+    without adding a swap to the route. */
+function buildTransferTx(token, to, amount) {
+  const iface = new ethers.Interface(ERC20_ABI);
+  return { to: token, data: iface.encodeFunctionData("transfer", [to, amount]), value: 0n };
+}
+
 function buildApproveTx(token, spender, amount) {
   const data = new ethers.Interface(ERC20_ABI).encodeFunctionData("approve", [spender, amount]);
   return { to: token, data, value: 0n };
@@ -228,6 +236,7 @@ module.exports = {
   describeRevert,
   allowance,
   buildApproveTx,
+  buildTransferTx,
   buildEthToUsdtTx,
   buildUsdcToUsdtTx,
   permit2Allowance,
