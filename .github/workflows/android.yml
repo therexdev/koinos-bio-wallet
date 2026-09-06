@@ -52,11 +52,28 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.13'
+
+      # Play rejects anything below API 36, and the toolchain has to be able
+      # to reach it: AGP 8.11 for the compile, Gradle 8.13 for that AGP, and
+      # the platform actually installed. Checking here names whichever is
+      # missing instead of leaving it in a Gradle stack trace.
+      - name: The toolchain can reach API 36
+        run: |
+          want=36
+          got=$(grep -oP 'compileSdk\s*=\s*\K[0-9]+' android/app/build.gradle)
+          tgt=$(grep -oP 'targetSdk\s*=\s*\K[0-9]+' android/app/build.gradle)
+          agp=$(grep -oP "com.android.application' version '\K[^']+" android/build.gradle)
+          echo "compileSdk=$got targetSdk=$tgt AGP=$agp gradle=$(gradle --version | awk '/^Gradle/{print $2}')"
+          [ "$tgt" -ge "$want" ] || { echo "::error::targetSdk is $tgt; Play requires at least $want."; exit 1; }
+          [ -d "$ANDROID_HOME/platforms/android-$want" ] || {
+            echo "::error::Android platform $want is not installed — the setup-android packages line needs 'platforms;android-$want'."; exit 1; }
+          echo "Platform $want present at $ANDROID_HOME/platforms/android-$want"
+
 
       - name: Keep the debug signing key between builds
         if: env.HAS_RELEASE_KEY != 'true'

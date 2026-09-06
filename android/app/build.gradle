@@ -17,12 +17,12 @@ def debugKeystore = System.getenv('ANDROID_DEBUG_KEYSTORE') ?: "${System.getProp
 
 android {
   namespace = 'wallet.koinos.app'
-  compileSdk = 34
+  compileSdk = 36
 
   defaultConfig {
     applicationId = 'wallet.koinos.app'
     minSdk = 23                 // Android 6+; the TWA itself needs Chrome 72+
-    targetSdk = 34
+    targetSdk = 36   // Play's floor from Aug 2026; below this it refuses the upload
     versionCode = envVersionCode
     versionName = envVersionName
   }
