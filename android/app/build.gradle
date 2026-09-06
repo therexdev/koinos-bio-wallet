@@ -16,11 +16,11 @@ def envVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0'
 def debugKeystore = System.getenv('ANDROID_DEBUG_KEYSTORE') ?: "${System.getProperty('user.home')}/.android/debug.keystore"
 
 android {
-  namespace = 'com.usekoinos.biowallet'
+  namespace = 'wallet.koinos.app'
   compileSdk = 34
 
   defaultConfig {
-    applicationId = 'com.usekoinos.biowallet'
+    applicationId = 'wallet.koinos.app'
     minSdk = 23                 // Android 6+; the TWA itself needs Chrome 72+
     targetSdk = 34
     versionCode = envVersionCode

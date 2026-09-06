@@ -60,7 +60,7 @@
   "related_applications": [
     {
       "platform": "play",
-      "id": "com.usekoinos.biowallet"
+      "id": "wallet.koinos.app"
     }
   ],
   "prefer_related_applications": false

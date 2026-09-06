@@ -52,7 +52,7 @@ const androidFingerprints = (raw) => String(raw || '').split(/[\s,]+/).map((f) =
 
 const CFG = {
   port: parseInt(process.env.PORT || '3000', 10),
-  androidPackage: (process.env.ANDROID_PACKAGE || 'com.usekoinos.biowallet').trim(),
+  androidPackage: (process.env.ANDROID_PACKAGE || 'wallet.koinos.app').trim(),
   androidFingerprints: androidFingerprints(process.env.ANDROID_SHA256_FINGERPRINTS),
   network: (process.env.KOINOS_NETWORK || 'harbinger').trim(),
   /* trimmed — a stray space or newline pasted into a hosting panel's env

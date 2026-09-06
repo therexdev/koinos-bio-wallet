@@ -545,7 +545,7 @@ node server.js
 | `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |
 | `DEMO_MODE` | — | `1` forces demo mode |
 | `ANDROID_SHA256_FINGERPRINTS` | — | SHA-256 fingerprint(s) of the Android app's signing certificate, comma-separated — serves `/.well-known/assetlinks.json` (see **Android app**) |
-| `ANDROID_PACKAGE` | `com.usekoinos.biowallet` | the Android app's package name |
+| `ANDROID_PACKAGE` | `wallet.koinos.app` | the Android app's package name |
 
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
 why on `/api/config`.

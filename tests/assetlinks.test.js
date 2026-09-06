@@ -47,7 +47,7 @@ function boot(extraEnv, port) {
       assert.ok(Array.isArray(j) && j.length === 1, 'one statement');
       assert.deepStrictEqual(j[0].relation, ['delegate_permission/common.handle_all_urls']);
       assert.strictEqual(j[0].target.namespace, 'android_app');
-      assert.strictEqual(j[0].target.package_name, 'com.usekoinos.biowallet');
+      assert.strictEqual(j[0].target.package_name, 'wallet.koinos.app');
       assert.deepStrictEqual(j[0].target.sha256_cert_fingerprints, [FP1, FP2], 'fingerprints upper-cased and trimmed');
       /* Chrome fetches this cross-origin with no credentials; nothing may block it. */
       assert.strictEqual(r.headers.get('access-control-allow-origin'), '*');
