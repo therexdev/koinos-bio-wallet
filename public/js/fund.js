@@ -491,24 +491,41 @@ const Fund = (() => {
 
     /* the job */
     if (j) {
+      /* A step that stopped moving must stop looking like one that is
+         moving. Without this a stalled job shows the same spinner and the
+         same hopeful sentence for ever, with no button anywhere to press —
+         which is exactly how a real conversion sat in the bridge unnoticed. */
       const label = j.status === 'done' ? `🎉 Landed ${j.koinReceived ? koin(j.koinReceived) + ' ' : ''}KOIN on your account!`
         : j.status === 'error' ? 'Swap hit a snag: ' + (j.error || 'unknown error')
         : needsTap(j) ? 'Your KOIN is ready to land!'
+        : j.stalled ? `Still on this step after ${j.stalled.minutes} minutes — your money is safe, but it needs a nudge.`
         : stepLabel(j);
       $('#fund-job-label').textContent = label;
       $('#fund-job-sub').textContent = jobActive && j.estKoinOut
         ? `${j.amountLabel || ''} → ≈ ${koin(j.estKoinOut)} KOIN · route ${j.route}`
         : '';
       const tap = needsTap(j) || j.status === 'awaiting_swap';
-      $('#fund-spin').hidden = !jobActive || tap;
+      $('#fund-spin').hidden = !jobActive || tap || !!j.stalled;
       $('#btn-fund-land').hidden = !tap;
       $('#btn-fund-land').textContent = j.status === 'awaiting_swap'
         ? 'Swap vETH → KOIN — confirm with passkey'
         : 'Land my KOIN — confirm with passkey';
-      $('#btn-fund-retry').hidden = j.status !== 'error';
+      /* Retry is reachable whenever a job is stuck, not only once the server
+         has given up on it. Retry re-reads the chain and resumes from where
+         the money actually is, so it is safe on a step that is merely slow. */
+      const stuck = j.status === 'error' || !!j.stalled;
+      $('#btn-fund-retry').hidden = !stuck;
       $('#btn-fund-reset').hidden = !['done', 'error'].includes(j.status);
-      opt('#fund-job .btn-row', (n) => { n.hidden = !(tap || ['done', 'error'].includes(j.status)); });
-      $('#fund-job').className = 'status' + (j.status === 'done' ? ' ok' : j.status === 'error' ? ' err' : '');
+      opt('#fund-job .btn-row', (n) => { n.hidden = !(tap || stuck || j.status === 'done'); });
+      $('#fund-job').className = 'status' + (j.status === 'done' ? ' ok' : j.status === 'error' ? ' err' : j.stalled ? ' warn' : '');
+      /* The reason, when the server has one — a swallowed retry loop or a
+         transaction that never mined both look like nothing from here. */
+      const why = j.stalled && (j.stalled.lastError
+        ? `Last problem: ${j.stalled.lastError}`
+        : j.stalled.pendingTx
+        ? `A transaction was sent but has not been mined: ${j.stalled.pendingTx}`
+        : null);
+      opt('#fund-job-why', (n) => { n.hidden = !why; n.textContent = why || ''; });
     }
   }
 

@@ -283,15 +283,29 @@ function feeRecipient() {
     money: the VAA names the recipient, which is why anyone may submit it. */
 async function redeemerFor(account, route) {
   const wallet = await transitWallet(account);
-  if (S.gasSponsorKey) return { wallet: new ethers.Wallet(S.gasSponsorKey, wallet.provider), sponsored: true };
-  /* Nobody is sponsoring, so the transit address pays — and it must hold
-     enough for everything that will be asked of it, not just the first
+  /* A sponsor key is not a sponsor. Trusting the key alone is how a deposit
+     gets stranded: the quote succeeds, the SOL is swapped and handed to
+     Wormhole, and only THEN does the redeem discover the float is empty —
+     with the money already one-way into the bridge. So the float is asked
+     whether it can actually pay for this route before the route is offered. */
+  /* What this route will ask of whoever pays for it — not just the first
      transaction. Route S arrives holding vKOIN and no ether, so it owes the
      redeem AND the Vortex steps; route T owes only the redeem, because what
-     it brings back pays for the rest. Checking just the redeem here is how a
-     job gets halfway and then stops for want of gas it never had. */
+     it brings back pays for the rest. Checking just the redeem is how a job
+     gets halfway and then stops for want of gas it never had. */
   const units = route === "S" ? WH_REDEEM_GAS_UNITS + VORTEX_TAIL_GAS_UNITS : WH_REDEEM_GAS_UNITS;
   const need = await gasCostWei(units);
+
+  if (S.gasSponsorKey) {
+    const sponsor = new ethers.Wallet(S.gasSponsorKey, wallet.provider);
+    let have;
+    try { have = await wallet.provider.getBalance(sponsor.address); }
+    catch (_) { return { wallet: sponsor, sponsored: true }; } // unreadable: assume it can, rather than block on a bad node
+    if (have >= need) return { wallet: sponsor, sponsored: true };
+    /* Too poor to sponsor. Fall through: the deposit address may hold its
+       own ether, and if it does not, the caller says so in plain words. */
+  }
+  /* Nobody is sponsoring, so the transit address pays. */
   const floor = ethers.parseEther(S.gasMinEth);
   const want = need > floor ? need : floor;
   const own = await wallet.provider.getBalance(wallet.address);
@@ -639,15 +653,57 @@ async function quotes(account) {
 
 const job = (account) => S.store.jobs[account] || null;
 function saveJob(account, j) {
-  S.store.jobs[account] = j ? { ...j, updatedAt: Date.now() } : null;
+  /* When the step last CHANGED, which is not the same as when the record was
+     last written: a job retrying the same step every few seconds updates
+     constantly while getting nowhere, and telling those apart is the whole
+     point of `statusAt`. */
+  const prev = S.store.jobs[account];
+  const moved = !prev || prev.status !== (j && j.status);
+  S.store.jobs[account] = j
+    ? {
+        ...j,
+        updatedAt: Date.now(),
+        statusAt: moved ? Date.now() : (prev.statusAt || Date.now()),
+        /* A step that moved on is not still failing; carrying its last
+           complaint forward would make the next stall lie about its cause. */
+        ...(moved ? { lastError: undefined, transientCount: undefined } : {}),
+      }
+    : null;
   if (!j) delete S.store.jobs[account];
   persist();
+}
+
+/* How long a step may sit before the card stops saying "in progress" and
+   starts saying "stuck". Generous, because some of these legitimately take
+   minutes: Wormhole guardians sign in one or two, an Ethereum transaction
+   can wait out a fee spike. Past this, something is wrong and saying so is
+   better than a spinner that never ends. */
+const STALL_MS = 12 * 60 * 1000;
+
+/** A job that has not moved on in a long time, with the reason if we have
+    one. Never a judgement about the money — only about progress. */
+function stallOf(j) {
+  if (!j || TERMINAL.has(j.status) || waitsForTap(j)) return null;
+  const since = Date.now() - (j.statusAt || j.updatedAt || Date.now());
+  if (since < STALL_MS) return null;
+  return {
+    minutes: Math.round(since / 60000),
+    /* The last thing that went wrong, even though it was retried rather than
+       failed — a swallowed error is exactly what makes a stall unreadable. */
+    lastError: j.lastError || undefined,
+    /* A transaction that was sent and never mined is its own diagnosis. */
+    pendingTx: j.pendingTx || undefined,
+  };
 }
 
 function publicJob(j) {
   if (!j) return null;
   const { record, vaa, ...rest } = j;
-  return { ...rest, recordAmount: record ? String(record.amount) : undefined };
+  return {
+    ...rest,
+    recordAmount: record ? String(record.amount) : undefined,
+    stalled: stallOf(j) || undefined,
+  };
 }
 
 /** Start a swap of `amount` (default: everything spendable) of `asset`,
@@ -930,8 +986,15 @@ async function tick() {
       else if (j.status === "awaiting_redeem") await autoRedeem(account, j);
     } catch (e) {
       const msg = String(e.message || e);
-      if (isTransient(msg)) { dropProvider(); }
-      else await failOrRecover(account, j, msg);
+      if (isTransient(msg)) {
+        /* Retrying is right — these do pass. Retrying SILENTLY is not: a
+           step that has failed this way a hundred times looks exactly like
+           one still working, and the card has no way to say otherwise. So
+           the reason is kept on the job even though the job carries on. */
+        dropProvider();
+        const cur = job(account);
+        if (cur) saveJob(account, { ...cur, lastError: msg.slice(0, 160), transientCount: (cur.transientCount || 0) + 1 });
+      } else await failOrRecover(account, j, msg);
     } finally {
       BUSY.delete(account);
     }
@@ -1896,6 +1959,9 @@ module.exports = {
   tick,
   /* the gas-reserve maths, exposed so a test can price it at a known fee */
   _spendableOf: spendableOf,
+  /* the job writer, exposed so a test can move a job on and watch the
+     stall bookkeeping follow */
+  _saveJob: saveJob,
   /* ages out the cached fee, so a test can price two different gas markets
      back to back without waiting ten real seconds */
   _forgetFeeCache: () => { _feeData = { at: 0, p: null }; },

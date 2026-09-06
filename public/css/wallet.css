@@ -191,6 +191,10 @@ h3 { font: 700 18px/24px var(--font); color: var(--bright); margin: 0; }
 }
 .status.ok { border-left-color: var(--good); }
 .status.err { border-left-color: var(--bad); color: var(--bad); }
+/* Stuck, not failed: the money is fine and a nudge is wanted, so it reads as
+   attention rather than as loss. */
+.status.warn { border-left-color: var(--warn); }
+.fund-job-why { margin-top: 6px; word-break: break-all; opacity: .85; }
 .status a { font-weight: 600; }
 #notices { display: contents; }   /* hidden children leave no phantom gap */
 #notices > .status { margin: 0 0 4px; border-left-color: var(--warn); }
