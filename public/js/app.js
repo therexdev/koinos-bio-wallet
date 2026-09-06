@@ -54,7 +54,19 @@
     badge.textContent = cfg.demo ? 'demo' : cfg.testnet ? (cfg.networkLabel || '').replace('Koinos ', '') : 'mainnet';
     badge.classList.add(NET);
   }
-  if (cfg.demo) $('#demo-note').hidden = false;
+  /* Demo mode is a CONFIGURATION state, not a mood: the server always knows
+     which setting is missing, so say it here instead of making someone read
+     a boot log to find out why their real balances are not showing. */
+  if (cfg.demo) {
+    const REMEDY = {
+      'no sponsor wallet configured': 'Set SPONSOR_WIF on the server.',
+      'smart-account contracts not deployed yet': 'Set VERIFIER_ADDR, MOD_SIGN_WEBAUTHN_ADDR and MOD_VALIDATION_SIGNATURE_ADDR.',
+    };
+    const why = cfg.note || 'DEMO_MODE=1 is set';
+    const note = $('#demo-note');
+    note.textContent = `Demo mode — ${why}. ${REMEDY[why] || ''} Balances and prices on this screen are samples, not your account.`.replace(/\s+/g, ' ').trim();
+    note.hidden = false;
+  }
   $('#sym').textContent = cfg.nativeSymbol || 'KOIN';
   $('#sym2').textContent = cfg.nativeSymbol || 'KOIN';
   UI.setContext({ cfg });
