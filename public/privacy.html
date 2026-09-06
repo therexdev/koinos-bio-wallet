@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy Policy — Koinos Bio Wallet</title>
+<meta name="description" content="What Koinos Bio Wallet stores, what it never stores, and what leaves your device.">
+<meta name="theme-color" content="#121212">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="/css/wallet.css">
+<link rel="icon" href="/assets/icon-192.png">
+<style>
+  .doc { max-width: 720px; margin: 0 auto; padding: 32px 20px 96px; }
+  .doc h1 { font-size: 28px; margin: 0 0 4px; }
+  .doc .updated { color: var(--dim); font-size: 13px; margin: 0 0 28px; }
+  .doc h2 { font-size: 18px; margin: 32px 0 8px; }
+  .doc p, .doc li { line-height: 1.6; }
+  .doc ul { padding-left: 20px; }
+  .doc code { font-size: 13px; }
+  .doc a { color: var(--accent); }
+  .doc .lede { font-size: 17px; }
+</style>
+</head>
+<body>
+<main class="doc">
+  <h1>Privacy Policy</h1>
+  <p class="updated">Koinos Bio Wallet · last updated 6 September 2026</p>
+
+  <p class="lede">This wallet is built so that the things worth protecting never
+  reach us. Your biometrics and your signing key stay on your phone, and we
+  cannot read them, export them, or hand them to anyone.</p>
+
+  <h2>What never leaves your device</h2>
+  <ul>
+    <li><strong>Your fingerprint or face.</strong> These are read by your phone's
+      own hardware. The app never receives them and has no way to.</li>
+    <li><strong>Your passkey's private key.</strong> It is created inside your
+      device's secure hardware and cannot be exported by this app or by us.
+      Transactions are signed on your phone, and only the signature is sent.</li>
+    <li><strong>Any seed phrase.</strong> There isn't one. Your account's
+      authority is a passkey registered to a smart contract on Koinos.</li>
+  </ul>
+
+  <h2>What we store</h2>
+  <ul>
+    <li><strong>Your account address and public key.</strong> Needed to build
+      transactions for you. Both are already public on the Koinos blockchain.</li>
+    <li><strong>Your passkey credential IDs</strong> — public identifiers that
+      say which passkeys may act for your account. They cannot sign anything.</li>
+    <li><strong>Conversion job records,</strong> if you use the Buy feature:
+      the deposit addresses generated for you, amounts, and transaction hashes,
+      kept so a conversion in progress can be finished or recovered.</li>
+    <li><strong>An email address,</strong> only if you choose to send tokens to
+      one. It is used to deliver that claim link and nothing else.</li>
+  </ul>
+
+  <h2>What we do not collect</h2>
+  <p>No name, no phone number, no contacts, no location, no photos, and no
+  advertising or analytics identifiers. There are no third-party ad networks,
+  trackers or analytics SDKs in this app. We do not sell or share personal
+  data, and there is nothing here that could be sold.</p>
+
+  <h2>The blockchain is public</h2>
+  <p>Transactions you make are recorded on the Koinos blockchain, and — if you
+  convert from Ethereum or Solana — on those networks too. Those records are
+  public, permanent, and outside anyone's control, including ours. Anyone can
+  see the amounts and addresses involved.</p>
+
+  <h2>Services the app talks to</h2>
+  <ul>
+    <li><strong>Koinos network nodes</strong> — to read balances and submit
+      transactions.</li>
+    <li><strong>Ethereum and Solana nodes, Jupiter, Uniswap, Wormhole and the
+      Vortex bridge</strong> — only when you use the Buy feature, to price and
+      carry out a conversion.</li>
+    <li><strong>Price feeds</strong> — to show what your holdings are worth.</li>
+  </ul>
+  <p>These see the network requests the app makes, including your IP address, as
+  any website you visit would.</p>
+
+  <h2>Funds in transit</h2>
+  <p>If you convert ETH, USDC, USDT or SOL into KOIN, the money moves through
+  addresses the app controls on your behalf until it lands as KOIN in your
+  account. This is stated in the app before you start. Everything else you
+  hold is controlled by your passkey and by no one else — we cannot move it,
+  freeze it, or recover it.</p>
+
+  <h2>Children</h2>
+  <p>This app is not directed at children under 13, and we do not knowingly
+  collect information from them.</p>
+
+  <h2>Deleting your data</h2>
+  <p>Email <a href="mailto:support@usekoinos.com">support@usekoinos.com</a> from
+  the address concerned, or with your account address, and we will delete the
+  records we hold. What is already on a blockchain cannot be deleted by anyone —
+  that is a property of the network, not a choice we make.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes materially we will update the date above and note
+  the change in the app's release notes.</p>
+
+  <h2>Contact</h2>
+  <p><a href="mailto:support@usekoinos.com">support@usekoinos.com</a></p>
+
+  <p style="margin-top:36px"><a href="/">← Back to the wallet</a></p>
+</main>
+</body>
+</html>
