@@ -97,16 +97,21 @@ jobs:
           KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          # MISSING is not WRONG, and saying the wrong one sends someone off
-          # to re-check a password that was never the problem. An unset
-          # secret arrives as empty string, so name the empty ones first.
+          # Two of the four were never secrets, and demanding them was the
+          # defect: four things to set is four chances to set three.
+          #   - the alias is a NAME, not a credential, and ours is always
+          #     'biowallet';
+          #   - the key password cannot differ from the store password in a
+          #     PKCS12 keystore, which is what keytool has made since JDK 9.
+          # So both are derived when unset, and only the keystore and its
+          # password are actually required.
+          ALIAS=${ALIAS:-biowallet}
+          KEYPASS=${KEYPASS:-$STOREPASS}
           MISSING=
           [ -n "$B64" ]       || MISSING="$MISSING ANDROID_KEYSTORE_BASE64"
           [ -n "$STOREPASS" ] || MISSING="$MISSING ANDROID_KEYSTORE_PASSWORD"
-          [ -n "$KEYPASS" ]   || MISSING="$MISSING ANDROID_KEY_PASSWORD"
-          [ -n "$ALIAS" ]     || MISSING="$MISSING ANDROID_KEY_ALIAS"
           if [ -n "$MISSING" ]; then
-            echo "::error::These signing secrets are not set:$MISSING — the build cannot sign without all four. Run 'bash android/tools/setup-signing.sh' in a codespace: it sets every one of them for you, with nothing to copy."
+            echo "::error::Not set:$MISSING. Only these two are needed — the alias defaults to 'biowallet' and the key password to the keystore password. Run 'bash android/tools/setup-signing.sh' in a codespace to set them with nothing to copy."
             exit 1
           fi
           KS="$RUNNER_TEMP/release.jks"

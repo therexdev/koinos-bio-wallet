@@ -65,12 +65,36 @@ if [ "$reuse" = false ]; then
 fi
 
 # Straight from the file to the secret. No terminal, no selection, no paste.
+# Each one is checked: a partial success here is what produced a build with
+# one secret of four set and an error message blaming the wrong thing.
 B64=$(mktemp); trap 'rm -f "$B64"' EXIT
 base64 -w0 "$KEY" > "$B64" 2>/dev/null || base64 "$KEY" | tr -d '\n' > "$B64"
-gh secret set ANDROID_KEYSTORE_BASE64   --repo "$REPO" < "$B64"
-printf '%s' "$PW"    | gh secret set ANDROID_KEYSTORE_PASSWORD --repo "$REPO"
-printf '%s' "$PW"    | gh secret set ANDROID_KEY_PASSWORD      --repo "$REPO"
-printf '%s' "$ALIAS" | gh secret set ANDROID_KEY_ALIAS         --repo "$REPO"
+set_secret() {
+  local name=$1
+  if ! gh secret set "$name" --repo "$REPO" >/dev/null 2>&1; then
+    echo "FAILED to set $name. Nothing below is trustworthy — stopping." >&2
+    exit 1
+  fi
+  echo "  set $name"
+}
+echo "Setting secrets on $REPO:"
+set_secret ANDROID_KEYSTORE_BASE64   < "$B64"
+printf '%s' "$PW"    | set_secret ANDROID_KEYSTORE_PASSWORD
+printf '%s' "$PW"    | set_secret ANDROID_KEY_PASSWORD
+printf '%s' "$ALIAS" | set_secret ANDROID_KEY_ALIAS
+
+# Read them back. gh cannot show values, but it can prove the NAMES exist,
+# which is exactly what was missing.
+missing=
+for n in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD ANDROID_KEY_ALIAS; do
+  gh secret list --repo "$REPO" | grep -q "^$n" || missing="$missing $n"
+done
+if [ -n "$missing" ]; then
+  echo "These did not stick:$missing" >&2
+  echo "Your gh login may not have permission to write secrets. Run:" >&2
+  echo "    gh auth refresh -h github.com -s repo" >&2
+  exit 1
+fi
 
 # Prove the round trip locally, so CI is not the first thing to find out.
 RT=$(mktemp); trap 'rm -f "$B64" "$RT"' EXIT
