@@ -206,8 +206,18 @@ const Fund = (() => {
         deposit: ' — paid out of your deposit',
         'deposit-and-platform': ' — from your deposit; we cover the bridge redeem',
       };
+      /* The cost is stated on every route, every time — in dollars where we
+         have a price, because "0.0052 ETH" means nothing to most people. */
+      const money = r.feeUsd != null
+        ? `$${r.feeUsd.toFixed(2)}${r.feePct != null ? ` · ${r.feePct.toFixed(1)}% of this swap` : ''}`
+        : `${Number(r.feeEth || 0).toFixed(4)} ETH`;
       const fee = r.feeEth
-        ? `<span class="fund-fee">network fees ≈ ${esc(Number(r.feeEth).toFixed(4))} ETH${PAYER[r.feePaidBy] || ''}</span>`
+        ? `<span class="fund-fee">fees ${esc(money)}${PAYER[r.feePaidBy] || ''}</span>`
+        : '';
+      /* And when it is a big share of a small swap, say it where it cannot be
+         missed rather than in grey text under the number. */
+      const alarm = r.feeWarn
+        ? `<div class="fee-warn"><strong>Check this before you convert.</strong> ${esc((r.feeReasons || []).join(', and '))}. Converting a larger amount at once, or waiting for Ethereum to quieten down, costs proportionally less.</div>`
         : '';
       const pi = Number(r.priceImpactPct);
       const impact = r.priceImpactPct != null && isFinite(pi)
@@ -218,7 +228,7 @@ const Fund = (() => {
         `<div class="fund-route-head">${head}` +
         `<button class="${r.isBest || single ? 'cta small' : 'ghost small'}" data-route="${esc(r.id)}">${btnLabel}</button></div>` +
         steps +
-        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}${fee}</div>` +
+        `<div class="fund-out"><strong>${koin(r.koinOut)} KOIN</strong>${best}${min}${impact}${fee}</div>` + alarm +
         `</div>`;
     }).join('');
   }

@@ -53,6 +53,9 @@ jup.quote = async ({ amount, outputMint }) => {
   };
 };
 /* Uniswap: linear, so the arithmetic under test is the only thing moving. */
+/* ether in dollars, for the fee thresholds */
+const ETH_USD = 3700;
+ethSwap.quoteUsdtOut = async ({ amountWei }) => ({ usdt: String(Math.round(Number(ethers.formatEther(amountWei)) * ETH_USD * 1e6)) });
 ethSwap.quoteEthToVkoin = async ({ amountEth }) => {
   const koin = Number(amountEth) * KOIN_PER_ETH;
   return { koinOut: String(Math.round(koin * 1e8)), koinOutMin: String(Math.round(koin * FILL * 1e8)) };
@@ -105,21 +108,25 @@ function boot({ sponsor }) {
     const q = await funding.quoteFor(ACCT, "sol", "0.2");
     const t = q.routes.find((r) => r.id === "T");
     /* 0.2 SOL → 0.03 ETH; less the 0.00405 reserve = 0.02595 spent. */
-    const spend = 0.2 * 0.15 - RESERVE;
-    const feeKoin = REDEEM * KOIN_PER_ETH;
+    /* No sponsor key in this run and the deposit address holds its own ether,
+       so nothing is borrowed: the fee is the 1% rate alone. */
+    const platform = 0.03 * 0.01;
+    const spend = 0.2 * 0.15 - RESERVE - platform;
     assert.strictEqual(t.ethBought, "0.03", "what the SOL buys in ether");
-    assert.ok(Math.abs(koin(t.koinOut) - (spend * KOIN_PER_ETH - feeKoin)) < 0.01,
-      `route T lands the ether it did not hold back, less the redeem: ${koin(t.koinOut)}`);
-    assert.ok(Math.abs(Number(t.feeEth) - (RESERVE + REDEEM)) < 1e-9, "and says what the whole thing costs in gas");
+    assert.ok(Math.abs(koin(t.koinOut) - spend * KOIN_PER_ETH) < 0.01,
+      `route T is priced on what is left after gas AND fee: ${koin(t.koinOut)}`);
+    assert.ok(Math.abs(Number(t.feeEth) - (RESERVE + platform)) < 1e-9, "and reports gas plus fee as one number");
+    assert.ok(Math.abs(t.feeUsd - (RESERVE + platform) * ETH_USD) < 0.02, "in dollars too");
+    assert.ok(t.feePct > 0 && t.feePct < 100, "and as a share of the conversion");
 
     /* The floor must assume Jupiter fills at ITS threshold, not its mid. */
     const worstArrived = 0.2 * 0.15 * FILL;
-    const floor = (worstArrived - RESERVE) * KOIN_PER_ETH * FILL - feeKoin;
+    const floor = (worstArrived - RESERVE - platform) * KOIN_PER_ETH * FILL;
     assert.ok(Math.abs(koin(t.koinOutMin) - floor) < 0.01,
       `the floor is priced on the worst Solana fill: ${koin(t.koinOutMin)} vs ${floor}`);
     /* The bug this replaces: pricing the floor on the EXPECTED fill, which
        lands above what the route can actually guarantee. */
-    const naive = (0.2 * 0.15 - RESERVE) * KOIN_PER_ETH * FILL - feeKoin;
+    const naive = (0.2 * 0.15 - RESERVE - platform) * KOIN_PER_ETH * FILL;
     assert.ok(koin(t.koinOutMin) < naive - 1, "and is genuinely below the optimistic figure it used to print");
     assert.ok(koin(t.koinOutMin) < koin(t.koinOut), "a floor is below the expectation");
     console.log("✓ route T: net of its own gas, with a floor that assumes the worst fill on both legs");
@@ -131,9 +138,14 @@ function boot({ sponsor }) {
     const q = await funding.quoteFor(ACCT, "sol", "0.2");
     const s = q.routes.find((r) => r.id === "S");
     const gross = 0.2 * 6000;
-    const feeKoin = (REDEEM + VORTEX) * KOIN_PER_ETH;
-    assert.ok(Math.abs(koin(s.koinOut) - (gross - feeKoin)) < 0.01, `route S is quoted net of its Ethereum tail: ${koin(s.koinOut)}`);
-    assert.ok(Math.abs(Number(s.feeEth) - (REDEEM + VORTEX)) < 1e-9);
+    /* everything on Ethereum is borrowed, so the fee recovers it plus 20%,
+       plus 1% of the 0.03 ETH the SOL is worth */
+    /* Unsponsored too, so route S pays its Ethereum tail out of the deposit
+       address and the platform fee is again just the rate. */
+    const platformS = 0.03 * 0.01;
+    assert.ok(Math.abs(koin(s.koinOut) - (gross - (platformS + REDEEM + VORTEX) * KOIN_PER_ETH)) < 0.01,
+      `route S is quoted net of its Ethereum tail and the fee: ${koin(s.koinOut)}`);
+    assert.ok(Math.abs(Number(s.feeEth) - (platformS + REDEEM + VORTEX)) < 1e-9);
     /* Nobody is sponsoring in this run, so it must not claim otherwise. */
     assert.strictEqual(s.feePaidBy, "deposit", "with no sponsor the fees come out of the deposit, and the card must say so");
     /* 0.2 SOL is 1200 KOIN through the Solana pool but 1297.5 through the

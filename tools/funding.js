@@ -503,6 +503,10 @@ async function quoteSol(account, amt) {
     catch (_) { return 0n; }
   };
   const qs = [];
+  /* What this much SOL is worth in ether — route T's own first leg answers
+     it, and both routes are converting the same SOL, so it is the value the
+     percentage fee is taken against either way. */
+  let solValueWei = 0n;
   /* A quote that the fees have eaten is not a quote. Never let a subtraction
      surface as a negative amount, or as a floor above the amount itself. */
   const afterFee = (gross, floor, fee) => {
@@ -523,10 +527,17 @@ async function quoteSol(account, amt) {
     if (!redeemerT) throw new Error(noRedeemer(null));
     const j = await jup.quote({ amount: amt, slippageBps: S.slippageBps, outputMint: SC.WETH_SOL_MINT });
     const arrivedWei = wormholeUnitsToWei(j.outAmount);
+    solValueWei = arrivedWei;
     if (arrivedWei <= reserveWei) {
       throw new Error(`this much SOL buys about ${short(ethers.formatEther(arrivedWei))} ETH, and the Ethereum swaps need about ${short(ethers.formatEther(reserveWei))} ETH of gas — convert more at once`);
     }
-    const spendWei = arrivedWei - reserveWei;
+    /* The platform fee comes out of the ether too, before anything is
+       swapped, so the quote must be priced on what is actually left. */
+    const platformWei = fees.feeWei({ sponsorWei: redeemerT.sponsored ? redeemWei : 0n, valueWei: arrivedWei, cfg: S.fee }).fee;
+    if (arrivedWei <= reserveWei + platformWei) {
+      throw new Error(`this much SOL buys about ${short(ethers.formatEther(arrivedWei))} ETH, and the gas and fee come to about ${short(ethers.formatEther(reserveWei + platformWei))} ETH — convert more at once`);
+    }
+    const spendWei = arrivedWei - reserveWei - platformWei;
     const c = await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(spendWei), slippageBps: S.slippageBps, provider: p });
     /* The floor has to assume the WORST fill on Solana, not the expected
        one: Jupiter's own min-out is what the swap enforces on chain, and
@@ -534,20 +545,18 @@ async function quoteSol(account, amt) {
        the tail on the expected fill would print a "minimum" the route can
        land under. */
     const minArrivedWei = wormholeUnitsToWei(j.outAmountMin);
-    const cMin = minArrivedWei > reserveWei
-      ? await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(minArrivedWei - reserveWei), slippageBps: S.slippageBps, provider: p })
+    const cMin = minArrivedWei > reserveWei + platformWei
+      ? await ethSwap.quoteEthToVkoin({ amountEth: ethers.formatEther(minArrivedWei - reserveWei - platformWei), slippageBps: S.slippageBps, provider: p })
       : { koinOutMin: "0" };
-    /* c is already net of the ether held back for gas; only the redeem is
-       still unaccounted for. */
-    const fee = await gasKoin(redeemWei);
-    qs.push({
+    /* Both figures are already net of the gas and the fee. */
+    qs.push(await attachFee({
       ...routes.descriptor("T"),
-      ...afterFee(c.koinOut, cMin.koinOutMin, fee),
+      ...afterFee(c.koinOut, cMin.koinOutMin, 0n),
       priceImpactPct: j.priceImpactPct, via: j.via,
-      feeEth: ethers.formatEther(reserveWei + redeemWei), ethBought: ethers.formatEther(arrivedWei),
+      ethBought: ethers.formatEther(arrivedWei),
       /* The deposit funds its own legs; only the redeem can be sponsored. */
       feePaidBy: redeemerT.sponsored ? "deposit-and-platform" : "deposit",
-    });
+    }, { p, valueWei: arrivedWei, gasWei: reserveWei, sponsoredWei: redeemerT.sponsored ? redeemWei : 0n }));
   } catch (e) { qs.push({ ...routes.descriptor("T"), koinOut: null, error: String(e.message || e) }); }
 
   /* Route S — buys vKOIN straight from the small Solana pool. Nothing it
@@ -555,16 +564,18 @@ async function quoteSol(account, amt) {
   try {
     if (!redeemerS) throw new Error(noRedeemer(redeemerT));
     const j = await jup.quote({ amount: amt, slippageBps: S.slippageBps });
-    const fee = await gasKoin(redeemWei + vortexWei);
-    qs.push({
+    /* Route S never holds ether, so everything on the Ethereum side is
+       borrowed from the float — which is what the per-job limit is for. */
+    const borrowed = redeemerS.sponsored ? redeemWei + vortexWei : 0n;
+    /* Its fee is taken in vKOIN, so it comes off the KOIN that lands. */
+    const platformWei = fees.feeWei({ sponsorWei: borrowed, valueWei: solValueWei, cfg: S.fee }).fee;
+    const fee = await gasKoin(platformWei + (redeemerS.sponsored ? 0n : redeemWei + vortexWei));
+    qs.push(await attachFee({
       ...routes.descriptor("S"),
       ...afterFee(j.outAmount, j.outAmountMin, fee),
       priceImpactPct: j.priceImpactPct, via: j.via,
-      feeEth: ethers.formatEther(redeemWei + vortexWei),
-      /* Only true when a sponsor exists; without one this route spends the
-         ether the person put at their own deposit address. */
       feePaidBy: redeemerS.sponsored ? "platform" : "deposit",
-    });
+    }, { p, valueWei: solValueWei, gasWei: redeemerS.sponsored ? 0n : redeemWei + vortexWei, sponsoredWei: borrowed }));
   } catch (e) { qs.push({ ...routes.descriptor("S"), koinOut: null, error: String(e.message || e) }); }
 
   return { asset: "sol", amount: SU.formatSol(amt), ...routes.compareRoutes(qs) };
@@ -653,6 +664,12 @@ async function start(account, { asset, amount, route } = {}) {
         const why = (q.routes || []).map((r) => r.error).filter(Boolean)[0];
         throw new Error(why ? `SOL can't be converted right now — ${why}` : "No SOL route can be quoted right now — try again in a minute");
       }
+    }
+    /* The float will not lend more than FUND_FEE_MAX_SPONSORED_USD to one
+       conversion — past that the deposit address has to hold its own ether,
+       or a single job could take a bite out of the float nothing repays. */
+    if (chosen.sponsorRefused) {
+      throw new Error(`Ethereum gas for this one comes to about $${chosen.feeUsd} — more than we front for a single conversion. Send about ${S.gasMinEth} ETH to your Ethereum deposit address and it will run from there.`);
     }
     /* Both routes end on Ethereum and the first Ethereum step happens before
        the deposit has any ether of its own. Establish now that somebody can
@@ -1266,6 +1283,66 @@ async function feeInToken(p, kind, feeWei) {
   throw new Error(`no price for a ${kind} fee`);
 }
 
+/** How the sponsor float is doing: what it holds, what it needs to hold, and
+    how many worst-case jobs that covers. The requirement is the sweep
+    threshold discounted by the buffer, plus whatever could be in flight — see
+    floatPlan in tools/eth/fees.js. Reported so nobody has to guess when to
+    top it up, or by how much. */
+async function floatHealth() {
+  if (!S.gasSponsorKey) return { sponsored: false };
+  const p = await ethProvider();
+  const wallet = new ethers.Wallet(S.gasSponsorKey, p);
+  const [balance, swapCost, rate] = await Promise.all([
+    p.getBalance(wallet.address), gasCostWei(150000n), ethUsd(p),
+  ]);
+  /* The most one job may borrow, expressed in ether at today's price. */
+  const maxJobWei = rate > 0 ? ethers.parseEther((S.fee.maxSponsoredUsd / rate).toFixed(18)) : 0n;
+  const plan = fees.floatPlan({ swapCostWei: swapCost, maxSponsoredWei: maxJobWei, cfg: S.fee });
+  const usd = (w) => (rate > 0 ? Number((Number(ethers.formatEther(w)) * rate).toFixed(2)) : undefined);
+  return {
+    sponsored: true, address: wallet.address,
+    balanceEth: ethers.formatEther(balance), balanceUsd: usd(balance),
+    requiredEth: ethers.formatEther(plan.requiredWei), requiredUsd: usd(plan.requiredWei),
+    jobsBeforeSweep: plan.jobsBeforeSweep,
+    healthy: balance >= plan.requiredWei,
+  };
+}
+
+/** Ether in dollars, from the same Uniswap pool the routes trade through.
+    Cached briefly: every quote wants it and it barely moves. */
+let _ethUsd = { at: 0, v: 0 };
+async function ethUsd(p) {
+  if (Date.now() - _ethUsd.at < 60000 && _ethUsd.v > 0) return _ethUsd.v;
+  try {
+    const { usdt } = await ethSwap.quoteUsdtOut({ amountWei: ethers.parseEther("1"), provider: p });
+    const v = Number(usdt) / 1e6;
+    if (v > 0) _ethUsd = { at: Date.now(), v };
+  } catch (_) { /* no price — dollar thresholds simply do not fire */ }
+  return _ethUsd.v;
+}
+
+/** Everything a person should be told about what a conversion costs, and
+    whether the float is willing to fund it.
+
+    `gasWei` is the ether the route holds back for its own transactions;
+    `sponsoredWei` is what the platform would have to lend, which is a
+    separate question from what the user pays. */
+async function attachFee(line, { p, valueWei, gasWei = 0n, sponsoredWei = 0n }) {
+  const { fee: platform } = fees.feeWei({ sponsorWei: sponsoredWei, valueWei, cfg: S.fee });
+  const total = BigInt(gasWei) + platform;
+  const rate = await ethUsd(p);
+  const usd = (w) => (rate > 0 ? Number(ethers.formatEther(w)) * rate : 0);
+  const a = fees.assess({ feeUsd: usd(total), valueUsd: usd(valueWei), sponsoredUsd: usd(sponsoredWei), cfg: S.fee });
+  return {
+    ...line,
+    feeEth: ethers.formatEther(total), platformFeeEth: ethers.formatEther(platform),
+    feeUsd: rate > 0 ? Number(usd(total).toFixed(2)) : undefined,
+    feePct: valueWei > 0n ? Number(a.pct.toFixed(2)) : undefined,
+    feeWarn: a.warn || undefined, feeLevel: a.level, feeReasons: a.reasons.length ? a.reasons : undefined,
+    sponsorRefused: a.sponsorRefused || undefined,
+  };
+}
+
 /** Decide this job's fee, in the units of whatever it will be taken from, and
     put it on the job so every later step and the card agree on one number.
 
@@ -1536,7 +1613,19 @@ function demoQuoteFor(asset, amt, spendable) {
       if (gross - feeKoin <= 0) {
         return { ...routes.descriptor(id), koinOut: null, error: `the Ethereum gas to finish this route costs more than the ${gross.toFixed(2)} KOIN it would buy` };
       }
-      const line = { ...routes.descriptor(id), koinOut: sats(gross - feeKoin), feeEth: (feeKoin / 3000).toFixed(6), ...extra };
+      /* The simulation shows the same money the live card does — dollars and
+         a share of the swap — so the warning thresholds can be seen working. */
+      const feeUsd = Number((feeKoin / DEMO_RATE_USD_KOIN).toFixed(2));
+      const pct = gross > 0 ? Number(((feeKoin / gross) * 100).toFixed(2)) : 0;
+      const said = fees.assess({ feeUsd, valueUsd: gross / DEMO_RATE_USD_KOIN, sponsoredUsd: sponsored ? feeUsd : 0, cfg: S.fee });
+      const line = {
+        ...routes.descriptor(id), koinOut: sats(gross - feeKoin),
+        feeEth: (feeKoin / 3000).toFixed(6), feeUsd, feePct: pct,
+        feeWarn: said.warn || undefined, feeLevel: said.level,
+        feeReasons: said.reasons.length ? said.reasons : undefined,
+        sponsorRefused: said.sponsorRefused || undefined,
+        ...extra,
+      };
       const min = BigInt(ethSwap.applySlippage(line.koinOut, S.slippageBps));
       line.koinOutMin = (min > 0n ? min : BigInt(line.koinOut)).toString();
       return line;
@@ -1626,7 +1715,8 @@ async function status(account) {
     caps: { eth: S.maxEth, stable: S.maxStable, sol: S.maxSol },
     solMin: S.minSol, solFloor: solFloor(),
     gasMinEth: S.gasMinEth, gasFronting: !!S.gasSponsorKey,
-    feePct: S.fee.ratePct,
+    feePct: S.fee.ratePct, feeWarnUsd: S.fee.warnUsd, feeWarnPct: S.fee.warnPct,
+    feeMaxSponsoredUsd: S.fee.maxSponsoredUsd,
     slippageBps: S.slippageBps,
   };
   /* Balances always (so the card can show what the address holds, zeros
@@ -1642,6 +1732,7 @@ async function status(account) {
       };
     }
     if (!j || TERMINAL.has(j.status)) out.quotes = await quotes(account);
+    out.float = await floatHealth().catch(() => undefined);
   } catch (e) { out.balancesError = String(e.message || e).slice(0, 160); }
   return out;
 }

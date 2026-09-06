@@ -204,10 +204,35 @@ every job carries a fee that refills it:
     fee = what the sponsor actually spent on this job (measured from the
           receipts, plus FUND_FEE_BUFFER_PCT) + FUND_FEE_PCT of the conversion
 
-The first part keeps the float level; the second is the margin. A cap
-(`FUND_FEE_MAX_PCT`) means a gas spike is the platform's problem rather than
-something that eats a quarter of someone's deposit, and a fee smaller than the
-transfer carrying it is skipped rather than paid.
+The first part keeps the float level; the second is the margin. **Nothing is
+ever absorbed** — the fee always covers the full cost plus the buffer, so the
+float never needs topping up by hand to cover a job it already ran.
+
+**Every route states its fee, in dollars and as a share of the swap**, on
+every quote. Above `FUND_FEE_WARN_USD` ($10) or `FUND_FEE_WARN_PCT` (10%) it
+is flagged where it cannot be missed rather than noted in grey: $5 of fees on
+a $20 swap is a quarter of it and nobody should walk into that unawares.
+Above `FUND_FEE_MAX_SPONSORED_USD` ($20) the float stops lending altogether
+and the conversion is refused until the deposit address holds its own ether —
+that is the per-job cap on how much one conversion can borrow. A fee smaller
+than the transfer that would carry it is skipped rather than paid.
+
+**How much ether the float needs.** A sponsored job takes its cost out of the
+float at once and repays it only when the fees it accrued are swept, so the
+exposure is however many jobs fit under the sweep threshold. Each accrues
+about (1 + buffer) times what it cost, so the job size cancels out and the
+requirement is simply the sweep threshold discounted by the buffer, plus
+whatever is in flight when a sweep lands:
+
+| worst-case gas | float needed | worst-case jobs it covers |
+|---|---|---|
+| 10 gwei | ~$185 | 4 |
+| 20 gwei | ~$270 | 8 |
+| 50 gwei | ~$520 | 20 |
+
+**About $500 covers gas up to roughly 50 gwei.** `/api/fund/status` reports
+`float` — the balance, the requirement at today's gas, how many jobs that
+covers and whether it is healthy — so it never has to be guessed at.
 
 **It is taken in whatever the route is already holding, so nothing extra is
 swapped for it.** Route T and ETH deposits pay in ether the moment they hold
@@ -217,7 +242,8 @@ pays in vKOIN. Those accrue to `FUND_FEE_TREASURY` and are converted to ether
 in one batch later, because per job that swap costs about as much as it
 recovers — at 5 gwei it returns about $1.39 of a $5.55 top-up, and above 10
 gwei it loses money. Batched over roughly a dozen jobs the same swap is a few
-percent. `node tests/fees.test.js` pins the arithmetic, in ether and in a
+percent. `node tests/fees.test.js` pins the arithmetic, the warning
+thresholds, the sponsorship limit and the float model, in ether and in a
 token's units.
 
 ## The app: one screen, three tabs
@@ -422,7 +448,9 @@ node server.js
 | `JUPITER_API_KEY` | — | Jupiter API key (optional) |
 | `FUND_FEE_PCT` | `1` | conversion fee, as a percentage of the amount |
 | `FUND_FEE_BUFFER_PCT` | `20` | added on top of the sponsor's measured cost, for the gas the recovery itself burns |
-| `FUND_FEE_MAX_PCT` | `25` | the fee never takes more than this share of a conversion, whatever gas did |
+| `FUND_FEE_WARN_USD` | `10` | a fee at or above this is flagged on the card, not just noted |
+| `FUND_FEE_WARN_PCT` | `10` | so is one that is this share of the conversion |
+| `FUND_FEE_MAX_SPONSORED_USD` | `20` | the float will not lend more than this to a single conversion; past it the deposit address must hold its own ether |
 | `FUND_FEE_TREASURY` | *(the sponsor)* | where token-denominated fees accrue; ether fees always go to the sponsor |
 | `FUND_FEE_SWEEP_MULTIPLE` | `12` | accrued tokens are converted to ether only once they are worth this many times the swap's own gas |
 | `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
