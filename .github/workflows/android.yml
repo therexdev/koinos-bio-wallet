@@ -94,11 +94,19 @@ jobs:
         env:
           B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STOREPASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           KS="$RUNNER_TEMP/release.jks"
           printf '%s' "$B64" | tr -d '[:space:]' | base64 -d > "$KS" 2>/dev/null || true
           SIZE=$(stat -c%s "$KS" 2>/dev/null || echo 0)
+          # A password copied out of a terminal very often brings a trailing
+          # newline or space with it, which is not a different password —
+          # just a worse copy of the same one. The generated password has no
+          # spaces in it, so trimming the ends can only help.
+          STOREPASS=$(printf '%s' "$STOREPASS" | tr -d '[:space:]')
+          KEYPASS=$(printf '%s' "$KEYPASS" | tr -d '[:space:]')
+          ALIAS=$(printf '%s' "$ALIAS" | tr -d '[:space:]')
           if ! keytool -list -keystore "$KS" -storepass "$STOREPASS" > /tmp/kt.out 2>&1; then
             echo "::group::keytool said"; cat /tmp/kt.out; echo "::endgroup::"
             if grep -qi 'password was incorrect\|keystore password' /tmp/kt.out; then
@@ -113,11 +121,22 @@ jobs:
             echo "::error::ANDROID_KEY_ALIAS is '$ALIAS', which is not in the keystore (see the group above for what is). make-keystore.sh uses 'biowallet'."
             exit 1
           fi
+          # The key password is a SECOND secret, and Gradle only discovers a
+          # mismatch deep in packageRelease. keytool cannot check it here:
+          # this is a PKCS12 store (keytool's default since JDK 9), where the
+          # key password IS the store password and -keypass is accepted and
+          # ignored on a list — so asking it would give a false all-clear.
+          # Comparing the two secrets is what actually catches the paste.
+          if [ "$KEYPASS" != "$STOREPASS" ]; then
+            echo "::error::ANDROID_KEY_PASSWORD differs from ANDROID_KEYSTORE_PASSWORD. This keystore is PKCS12, where they must be identical — make-keystore.sh prints ONE password to paste into both secrets."
+            exit 1
+          fi
           echo "Keystore decoded and opened: $SIZE bytes, alias '$ALIAS'."
+          # The trimmed values, so the build uses what was just verified.
           echo "ANDROID_KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
-          echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$STOREPASS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$KEYPASS" >> "$GITHUB_ENV"
 
       - name: Build APK and App Bundle
         working-directory: android

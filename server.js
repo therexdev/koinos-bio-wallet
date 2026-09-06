@@ -685,9 +685,25 @@ api.fundPrepareStep = async (body) => {
    the sponsor's public address, never a URL, a key or a query string. */
 api.health = async (params) => {
   const out = { ok: true, demo: DEMO, network: CFG.network };
+  /* WHY, not just whether. "Sample prices are showing again" has four
+     possible causes and they want completely different things done about
+     them — a missing SPONSOR_WIF is an environment that got lost, while a
+     chain probe that failed at boot fixes ITSELF within the minute. Making
+     someone guess between those, with real money mid-conversion, is the
+     difference between waiting and panicking. */
+  if (DEMO) {
+    out.demoReason = BOOT_NOTE || 'DEMO_MODE=1 is set';
+    out.demoRecovers = /retrying automatically/.test(BOOT_NOTE || '') || undefined;
+  }
   if (params && params.get('rail')) {
     out.rail = DEMO
-      ? { demo: true, note: 'this server is in demo mode — no real conversion runs, whatever the settings say' }
+      ? {
+          demo: true,
+          reason: out.demoReason,
+          note: out.demoRecovers
+            ? 'this server fell back to demo because the chain was unreachable at boot; it retries every 60s and returns to live on its own — no real conversion moves until it does'
+            : 'this server is in demo mode — no real conversion runs, whatever the settings say',
+        }
       : await funding.railHealth().catch((e) => ({ error: String(e.message || e).slice(0, 200) }));
   }
   return out;
