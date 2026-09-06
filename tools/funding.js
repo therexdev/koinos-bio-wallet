@@ -71,6 +71,10 @@ const jup = require("./sol/jupiter");
    all — see tools/sol/keys.js. Only converting what lands there does, which
    is why this one is a plain require and the two below are not. */
 const solKeys = require("./sol/keys");
+/* Reading what is AT the deposit address is one HTTP request, so it does not
+   go through the Solana packages either — a person must be able to see their
+   own money whether or not this host can convert it. */
+const solLite = require("./sol/rpc-lite");
 let sol = null, wormhole = null, SOL_LOAD_ERROR = null;
 try { sol = require("./sol/sol-rpc"); wormhole = require("./sol/wormhole"); }
 catch (e) { SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; }
@@ -316,13 +320,12 @@ async function balances(account) {
   /* Route S balances ride along. A Solana read failing must not take the
      Ethereum numbers down with it: the card keeps those and says the
      Solana side is unavailable. */
-  if (railOn() && t.solAddress) {
+  if (t.solAddress) {
     try {
-      const c = await solConn();
       const [lam, vk, we] = await Promise.all([
-        sol.solBalance(c, t.solAddress),
-        sol.tokenBalance(c, SC.VKOIN_SOL_MINT, t.solAddress),
-        sol.tokenBalance(c, SC.WETH_SOL_MINT, t.solAddress),
+        solLite.solBalance(t.solAddress),
+        solLite.tokenBalance(SC.VKOIN_SOL_MINT, t.solAddress),
+        solLite.tokenBalance(SC.WETH_SOL_MINT, t.solAddress),
       ]);
       out.sol = SU.formatSol(lam); out.solLamports = lam.toString();
       out.solVkoin = U.formatVkoin(vk); out.solVkoinSats = vk.toString();
@@ -330,8 +333,12 @@ async function balances(account) {
       out.solWethSats = we.toString();
       out.solWeth = ethers.formatEther(wormholeUnitsToWei(we));
     } catch (e) {
-      out.solError = String(e.message || e).slice(0, 160);
-      if (isTransient(out.solError)) _solConn = null;
+      const why = String(e.message || e).slice(0, 140);
+      /* The public endpoint turns away datacenter traffic, which is where
+         this runs. Say what to do about it rather than just the status code. */
+      out.solError = /\b(403|429)\b|forbidden|too many/i.test(why) && !process.env.SOLANA_RPC
+        ? `${why} — the public Solana endpoint refuses server traffic; set SOLANA_RPC to your own endpoint`
+        : why;
     }
   }
   BAL_CACHE.set(account, { at: Date.now(), balances: out });
@@ -1400,7 +1407,7 @@ function demoBalances(account) {
     usdc: b.usdc, usdcSats: U.parseUsdc(b.usdc).toString(),
     usdt: b.usdt, usdtSats: U.parseUsdt(b.usdt).toString(),
     vkoin: "0", vkoinSats: "0",
-    ...(railOn() && t.solAddress ? {
+    ...(t.solAddress ? {
       sol: b.sol, solLamports: SU.parseSol(b.sol).toString(),
       solVkoin: "0", solVkoinSats: "0", solWeth: "0", solWethSats: "0",
     } : {}),

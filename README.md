@@ -427,6 +427,11 @@ serving. `/api/config` reports what is running:
 | `commit` | the commit it was built from (absent if the deploy strips `.git`) |
 | `solRail` | whether the optional Solana packages are installed here |
 
+`SOLANA_RPC` is effectively required: the public endpoint refuses datacenter
+traffic (HTTP 403) and rate-limits the rest, so without your own endpoint the
+SOL balance cannot be read. The wallet says exactly that on the card rather
+than showing nothing.
+
 The five Solana packages are **optionalDependencies**: npm carries on when
 they cannot be installed, so a rail that is optional in the code cannot fail
 the wallet's deploy. The **deposit address does not depend on them** — a

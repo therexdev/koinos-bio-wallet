@@ -59,8 +59,10 @@ ethSwap.quoteEthToVkoin = async ({ amountEth }) => {
 };
 swap.balanceOf = async () => 0n;
 sol.makeConnection = async () => ({ rpcEndpoint: "stub" });
-sol.solBalance = async () => ethers.parseUnits("0.35", 9);
-sol.tokenBalance = async () => 0n;
+/* Balances come over plain JSON-RPC now, not through the Solana packages. */
+const solLite = require("../tools/sol/rpc-lite");
+solLite.solBalance = async () => ethers.parseUnits("0.35", 9);
+solLite.tokenBalance = async () => 0n;
 
 const ACCT = "1LiveSolQuoteAccountXXXXXXXXXXXXXX";
 const wei = (n) => ethers.parseEther(String(n));

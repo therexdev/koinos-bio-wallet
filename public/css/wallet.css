@@ -462,6 +462,7 @@ body.sheet-open #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); }
 .fund-net.sol { border-color: rgba(20, 241, 149, .5); color: var(--sol); }
 .fund-chain { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
 .sol-off { color: var(--warn); text-align: center; }
+.fund-balances .fund-solerr { color: var(--warn); border-color: rgba(251, 191, 36, .45); }
 .fund-chain .step-head { margin-bottom: 4px; }
 .fund-chain .step-head .k { font-size: 14px; }
 .fund-addr { font-size: 13px; }

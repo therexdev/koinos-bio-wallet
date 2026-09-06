@@ -319,7 +319,8 @@ const Fund = (() => {
       const can = (a) => Number(sp[a]) > 0;
       const showEth = !!b && can('eth');
       const showStable = !!b && (can('usdc') || can('usdt'));
-      const showSol = solConvert && !!b && b.sol != null && can('sol');
+      /* Their money, shown whether or not this host can convert it. */
+      const showSol = !!b && b.sol != null && can('sol');
       $('#stat-eth').innerHTML = b ? f(b.eth, 5) + tag : '—';
       $('#stat-stable').innerHTML = b ? `${f(b.usdc, 2)} / ${f(b.usdt, 2)}` + tag : '—';
       opt('#stat-sol', (n) => { n.innerHTML = showSol ? f(b.sol, 4) + tag : '—'; });
@@ -352,17 +353,18 @@ const Fund = (() => {
       /* Always shown, zero included. Hiding it when it hits 0 is how a
          correct bridging step reads as "my money disappeared". */
       strip.push(`<span>vKOIN <strong>${f(b.vkoin, 2)}</strong></span>`);
-      if (solConvert) {
-        if (b.sol != null) {
-          const sp = st.spendable || {};
-          const stuck = Number(b.sol) > 0 && !(Number(sp.sol) > 0) && st.solFloor;
-          strip.push(`<span>SOL <strong>${f(b.sol, 4)}</strong>${stuck ? ` · needs ${esc(st.solFloor)} to convert` : ''}</span>`);
-          /* vKOIN on Solana exists only mid-route; shown while it does. */
-          if (Number(b.solVkoin) > 0) strip.push(`<span>vKOIN·Solana <strong>${f(b.solVkoin, 2)}</strong></span>`);
-          if (Number(b.solWeth) > 0) strip.push(`<span>ETH·Solana <strong>${f(b.solWeth, 5)}</strong></span>`);
-        } else if (b.solError) {
-          strip.push('<span>Solana balance unavailable right now</span>');
-        }
+      if (b.sol != null) {
+        const sp = st.spendable || {};
+        const stuck = solConvert && Number(b.sol) > 0 && !(Number(sp.sol) > 0) && st.solFloor;
+        strip.push(`<span>SOL <strong>${f(b.sol, 4)}</strong>${stuck ? ` · needs ${esc(st.solFloor)} to convert` : ''}</span>`);
+        /* vKOIN and wETH on Solana exist only mid-route; shown while they do. */
+        if (Number(b.solVkoin) > 0) strip.push(`<span>vKOIN·Solana <strong>${f(b.solVkoin, 2)}</strong></span>`);
+        if (Number(b.solWeth) > 0) strip.push(`<span>ETH·Solana <strong>${f(b.solWeth, 5)}</strong></span>`);
+      } else if (b.solError) {
+        /* Never silent: a balance we could not read is said out loud, with
+           the reason, because "no SOL shown" and "SOL not readable" are very
+           different things to the person who just deposited some. */
+        strip.push(`<span class="fund-solerr">Solana balance unavailable — ${esc(b.solError)}</span>`);
       }
     } else if (st.balancesError) {
       strip.push('<span>balances unavailable right now</span>');
