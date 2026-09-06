@@ -43,7 +43,15 @@ keytool -genkeypair -v -keystore "$out" -alias "$alias" -keyalg RSA -keysize 409
 chmod 600 "$out"
 
 fp=$(keytool -list -v -keystore "$out" -storepass "$pw" -alias "$alias" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
-b64=$(base64 -w0 "$out" 2>/dev/null || base64 "$out" | tr -d '\n')
+
+# The base64 goes to a FILE, not to the terminal. Copying 5,000-plus
+# characters by dragging across a wrapped line is the step that goes wrong,
+# and a paste cut short decodes with no error at all into a corrupt
+# keystore — which only surfaces later as a Gradle failure nobody can read.
+# In a file, Ctrl-A selects exactly all of it.
+b64file="KEYSTORE_BASE64.txt"
+base64 -w0 "$out" > "$b64file" 2>/dev/null || base64 "$out" | tr -d '\n' > "$b64file"
+b64len=$(wc -c < "$b64file" | tr -d ' ')
 
 cat <<TXT
 
@@ -69,7 +77,12 @@ STEP 1 — Add four secrets to GitHub.
          (yes — the same value as the one above)
   ----------------------------------------------------------------
   Name:  ANDROID_KEYSTORE_BASE64
-  Value: the one long line printed at the very bottom of this output
+  Value: the contents of $b64file ($b64len characters)
+
+         Open that file from the Explorer panel on the left, then
+         Ctrl-A, Ctrl-C. Do NOT drag-select it: a copy that stops
+         short decodes without any error and produces a corrupt
+         key, and the build then fails on something unreadable.
   ----------------------------------------------------------------
 
 STEP 2 — Back the key up.
@@ -104,8 +117,6 @@ assetlinks and Play App Signing):
 
 $fp
 
-================================================================
- ANDROID_KEYSTORE_BASE64 — copy the single line below, all of it
-================================================================
-$b64
+When every secret is in, delete the base64 file:  rm $b64file
+(The key itself stays at $out.)
 TXT

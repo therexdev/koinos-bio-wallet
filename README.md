@@ -357,6 +357,18 @@ installed locally.
 4. It prints a numbered list. Follow it: four secrets to paste into
    **Settings → Secrets and variables → Actions**, then the file to download
    as your backup.
+
+   Three of the four are short. The fourth, `ANDROID_KEYSTORE_BASE64`, is
+   about 5,700 characters, so the script writes it to `KEYSTORE_BASE64.txt`
+   rather than to the terminal: **open that file and press Ctrl-A, Ctrl-C**.
+   Do not drag-select it. A base64 paste that stops short decodes with no
+   error whatsoever into a corrupt keystore, and the build fails much later
+   with `toDerInputStream rejects tag type -46`, which names nothing. `rm
+   KEYSTORE_BASE64.txt` when the secret is saved; to get it back later,
+   `bash android/tools/print-keystore-secret.sh`.
+
+   The build now checks the decode before compiling anything and says which
+   of the three it is — truncated paste, wrong password, or wrong alias.
 5. Download the key. The Explorer panel only shows the repository folder,
    and the key is deliberately written *outside* it — so bring it in for a
    moment, download it, and put it back:

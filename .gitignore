@@ -9,3 +9,5 @@ data/
 *.jks
 *.keystore
 *.pepk
+# The base64 of the key is the key. Same rules.
+KEYSTORE_BASE64.txt

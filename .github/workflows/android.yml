@@ -79,11 +79,42 @@ jobs:
           fi
           echo "ANDROID_DEBUG_KEYSTORE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
 
+      # The keystore arrives as base64 pasted by a human out of a terminal,
+      # which is where this goes wrong. Two failures are worth naming here
+      # rather than letting Gradle hit them minutes later as a Java stack
+      # trace ("toDerInputStream rejects tag type -46"):
+      #   - a paste that picked up spaces or indentation. base64 tolerates
+      #     newlines but not spaces, so every space is stripped first: that
+      #     is a badly copied key, not a different one.
+      #   - a paste cut short. That decodes with NO error at all and yields
+      #     a corrupt file, so the only way to catch it is to ask keytool
+      #     whether the result is really a keystore.
       - name: Release keystore from secrets
         if: env.HAS_RELEASE_KEY == 'true'
+        env:
+          B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STOREPASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
-          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          KS="$RUNNER_TEMP/release.jks"
+          printf '%s' "$B64" | tr -d '[:space:]' | base64 -d > "$KS" 2>/dev/null || true
+          SIZE=$(stat -c%s "$KS" 2>/dev/null || echo 0)
+          if ! keytool -list -keystore "$KS" -storepass "$STOREPASS" > /tmp/kt.out 2>&1; then
+            echo "::group::keytool said"; cat /tmp/kt.out; echo "::endgroup::"
+            if grep -qi 'password was incorrect\|keystore password' /tmp/kt.out; then
+              echo "::error::The keystore decoded ($SIZE bytes) but ANDROID_KEYSTORE_PASSWORD is wrong. It must be the password make-keystore.sh printed, pasted into BOTH password secrets."
+            else
+              echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a usable keystore ($SIZE bytes). A base64 paste that was cut short decodes with no error and produces exactly this. Re-copy the WHOLE single line — in the codespace, 'bash android/tools/print-keystore-secret.sh' writes it to a file you can open and select all of."
+            fi
+            exit 1
+          fi
+          if ! grep -qiF "$ALIAS," /tmp/kt.out; then
+            echo "::group::aliases in this keystore"; cat /tmp/kt.out; echo "::endgroup::"
+            echo "::error::ANDROID_KEY_ALIAS is '$ALIAS', which is not in the keystore (see the group above for what is). make-keystore.sh uses 'biowallet'."
+            exit 1
+          fi
+          echo "Keystore decoded and opened: $SIZE bytes, alias '$ALIAS'."
+          echo "ANDROID_KEYSTORE_FILE=$KS" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
           echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
