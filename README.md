@@ -427,6 +427,11 @@ serving. `/api/config` reports what is running:
 | `commit` | the commit it was built from (absent if the deploy strips `.git`) |
 | `solRail` | whether the optional Solana packages are installed here |
 
+The five Solana packages are **optionalDependencies**: npm carries on when
+they cannot be installed, so a rail that is optional in the code cannot fail
+the wallet's deploy. If `solRail` is false, install them on the host (Node
+20.19+) and restart; nothing else is affected.
+
 If `commit` does not match `git rev-parse HEAD`, the deploy did not take. The
 service worker is network-first and never caches `/api`, so a stale screen is
 always the server, never the browser cache. The Solana rail needs Node 20.19+
