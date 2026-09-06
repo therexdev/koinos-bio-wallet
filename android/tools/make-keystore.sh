@@ -1,41 +1,96 @@
 #!/usr/bin/env bash
-# Create the app's signing keystore ONCE and print what CI needs.
+# Create the app's signing key ONCE and print exactly what to paste where.
 #
-#   android/tools/make-keystore.sh [release.jks] [alias]
+#   bash android/tools/make-keystore.sh
 #
-# The key is the app's identity on every phone: a build signed with a
-# different key cannot be installed over one that is already there (Android
-# says "App not installed"), and Play ties the listing to it. Make it once,
-# back the file up offline, never commit it (android/.gitignore refuses
-# *.jks and *.keystore).
+# The key is the app's identity on every phone. A build signed with a
+# different key cannot install over one already there (Android says "App not
+# installed"), and Google Play ties the listing to it forever: lose this file
+# and you can never update the app again. So: it is written OUTSIDE the
+# repository (this one is public), and you must back it up somewhere safe.
 set -euo pipefail
-out=${1:-release.jks}
+
+# Outside the working tree by default, because a keystore committed to a
+# public repo hands the app's identity to anyone who looks.
+default_out="$HOME/koinos-bio-wallet-release.jks"
+out=${1:-$default_out}
 alias=${2:-biowallet}
+
+if repo_root=$(git -C "$(dirname "$out")" rev-parse --show-toplevel 2>/dev/null); then
+  echo "Refusing to write inside the git repository at $repo_root." >&2
+  echo "This repository is public. Run it with no arguments and the key goes" >&2
+  echo "to $default_out instead." >&2
+  exit 1
+fi
+
 if [ -e "$out" ]; then
-  echo "$out already exists — keep the key you have; a new one is a new app identity." >&2
+  echo "$out already exists — keep the key you have." >&2
+  echo "A new key is a NEW app identity: Play would reject it as an update," >&2
+  echo "and phones could not install over the existing app." >&2
   exit 1
 fi
 command -v keytool >/dev/null || { echo "keytool not found: install a JDK (17+)" >&2; exit 1; }
-read -rsp "Keystore password (8+ characters): " pw; echo
-[ ${#pw} -ge 8 ] || { echo "too short" >&2; exit 1; }
+
+# Generated, not typed: this password is only ever pasted between this output
+# and a GitHub secret, so there is nothing to remember and nothing to guess.
+# `tr ... < /dev/urandom | head -c` looks tidier and dies here: head closes
+# the pipe, tr takes SIGPIPE, and `set -o pipefail` kills the script before
+# it does anything. od reads a fixed count and exits on its own.
+pw=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+
 keytool -genkeypair -v -keystore "$out" -alias "$alias" -keyalg RSA -keysize 4096 -validity 10000 \
   -storepass "$pw" -keypass "$pw" -dname "CN=Koinos Bio Wallet, O=usekoinos.com, C=US" >/dev/null
+chmod 600 "$out"
+
 fp=$(keytool -list -v -keystore "$out" -storepass "$pw" -alias "$alias" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
 b64=$(base64 -w0 "$out" 2>/dev/null || base64 "$out" | tr -d '\n')
+
 cat <<TXT
 
-Created $out (alias $alias). Back it up offline now.
+================================================================
+ DONE. The key is at:  $out
+================================================================
 
-GitHub → repository Settings → Secrets and variables → Actions:
-  ANDROID_KEYSTORE_BASE64   $b64
-  ANDROID_KEYSTORE_PASSWORD (the password you typed)
-  ANDROID_KEY_ALIAS         $alias
-  ANDROID_KEY_PASSWORD      (the same password)
+STEP 1 — Add four secrets to GitHub.
 
-Wallet server environment (makes Chrome hide the URL bar in the app):
-  ANDROID_SHA256_FINGERPRINTS=$fp
+  Open: https://github.com/therexdev/koinos-bio-wallet/settings/secrets/actions
+  Click "New repository secret" four times, once per row below.
+  Name and value must match exactly.
 
-After the next CI run every build is signed with this key, so new builds
-install over old ones. Phones that already have a debug-signed build must
-uninstall it once.
+  ----------------------------------------------------------------
+  Name:  ANDROID_KEY_ALIAS
+  Value: $alias
+  ----------------------------------------------------------------
+  Name:  ANDROID_KEYSTORE_PASSWORD
+  Value: $pw
+  ----------------------------------------------------------------
+  Name:  ANDROID_KEY_PASSWORD
+  Value: $pw
+         (yes — the same value as the one above)
+  ----------------------------------------------------------------
+  Name:  ANDROID_KEYSTORE_BASE64
+  Value: the one long line printed at the very bottom of this output
+  ----------------------------------------------------------------
+
+STEP 2 — Back the key up.
+
+  Download $out and keep it somewhere you will still
+  have in five years. Save this password with it: $pw
+  Without both, this app can never be updated again.
+
+STEP 3 — Build a signed app.
+
+  https://github.com/therexdev/koinos-bio-wallet/actions/workflows/android.yml
+  → "Run workflow" → Run. When it finishes, the .aab for Play is on:
+  https://github.com/therexdev/koinos-bio-wallet/releases/tag/android-latest
+
+This key's SHA-256 fingerprint (NOT secret — see the README about
+assetlinks and Play App Signing):
+
+$fp
+
+================================================================
+ ANDROID_KEYSTORE_BASE64 — copy the single line below, all of it
+================================================================
+$b64
 TXT

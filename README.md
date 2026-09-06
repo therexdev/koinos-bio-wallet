@@ -330,21 +330,50 @@ one of: a build signed with a *different key* is already installed
 blocked the install (Settings → Apps → Special app access → Install unknown
 apps). `adb install bio-wallet.apk` on a computer prints the exact reason.
 
-**Signing.** With no secrets the build is signed by a *debug* key: installable,
-but not for Play and not matching the site's asset links. CI caches that key
-between runs so newer builds install over older ones, but the cache can be
-evicted, after which phones must uninstall once. For a real key, make one
-once and keep it forever (losing it means a new app identity on every phone
-and on Play):
+**Signing.** With no secrets the build is signed by a *debug* key: installable
+by hand, but **Play rejects it** ("signed in debug mode") and it does not match
+the site's asset links. CI caches that key between runs so newer builds install
+over older ones, but the cache can be evicted, after which phones must
+uninstall once.
 
-```bash
-android/tools/make-keystore.sh        # creates release.jks, prints the secrets and the fingerprint
-```
+For a real key, make one **once** and keep it forever — losing it means a new
+app identity on every phone, and an app on Play that can never be updated
+again.
 
-It prints the four repository secrets (`ANDROID_KEYSTORE_BASE64`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`);
-the next run signs with the key. Back the file up offline; it never enters
-the repository (`android/.gitignore`).
+### Making the signing key, with no terminal on your computer
+
+You need a shell, and GitHub gives you one in the browser. Nothing is
+installed locally.
+
+1. Go to <https://github.com/therexdev/koinos-bio-wallet>.
+2. Green **Code** button → **Codespaces** tab → **Create codespace on main**.
+   A VS Code window opens in the browser; give it a minute.
+3. In the terminal panel at the bottom, type this and press Enter:
+
+   ```bash
+   bash android/tools/make-keystore.sh
+   ```
+
+4. It prints a numbered list. Follow it: four secrets to paste into
+   **Settings → Secrets and variables → Actions**, then the file to download
+   as your backup.
+5. Download the key: in the file explorer, **...** → *Download*, on
+   `koinos-bio-wallet-release.jks` in your home folder. Keep it and its
+   password somewhere you will still have in five years.
+6. Delete the codespace when finished (github.com/codespaces → **...** →
+   *Delete*). The key is already in the secrets and in your download.
+
+The script writes the key **outside** the repository and refuses to write
+inside it, because this repository is public and a committed keystore hands
+the app's identity to anyone who looks. `*.jks`, `*.keystore` and `*.pepk` are
+ignored at the root and in `android/` as a second line of defence.
+
+The password is generated rather than chosen: it is only ever copied from that
+output into a GitHub secret, so there is nothing to invent and nothing to
+guess.
+
+Adding `ANDROID_KEYSTORE_BASE64` is what flips the build — `HAS_RELEASE_KEY`
+in the workflow is exactly `secrets.ANDROID_KEYSTORE_BASE64 != ''`.
 
 **Losing the URL bar (Digital Asset Links).** Chrome hides the browser UI only
 when the site vouches for the app: `/.well-known/assetlinks.json` must name

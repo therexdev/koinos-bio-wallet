@@ -2,3 +2,10 @@ node_modules/
 wallet.env
 *.env
 data/
+
+# Android signing material. NEVER in the repository — this one is public,
+# and the signing key is the app's permanent identity on every phone: leak
+# it and anyone can publish an update that Android accepts as yours.
+*.jks
+*.keystore
+*.pepk
