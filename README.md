@@ -427,20 +427,23 @@ serving. `/api/config` reports what is running:
 | `commit` | the commit it was built from (absent if the deploy strips `.git`) |
 | `solRail` | whether the optional Solana packages are installed here |
 
+**The Solana side needs no packages.** The transfer instruction, the
+transaction, the signature and the VAA are all built directly, in
+`tools/sol/*-lite.js`, on plain JSON-RPC and Node's own crypto. The Solana and
+Wormhole libraries are devDependencies used only to check that work: the tests
+generate the same instructions, transactions and VAAs both ways and require
+the bytes to be identical. So the rail runs on any Node 18 and cannot be
+switched off by an install that skipped something — which is what kept it dark
+in production for a day.
+
 `SOLANA_RPC` is effectively required: the public endpoint refuses datacenter
 traffic (HTTP 403) and rate-limits the rest, so without your own endpoint the
 SOL balance cannot be read. The wallet says exactly that on the card rather
 than showing nothing.
 
-The five Solana packages are **optionalDependencies**: npm carries on when
-they cannot be installed, so a rail that is optional in the code cannot fail
-the wallet's deploy. The **deposit address does not depend on them** — a
-Solana address is an ed25519 public key in base58, which Node's own crypto
-makes (`tools/sol/keys.js`, checked against `@solana/web3.js`), so every
-account has one and the Buy tab always shows it. When `solRail` is false the
-address and its QR are still there, with a line saying conversion is not
-available yet; install the packages on the host (Node 20.19+) and restart to
-turn conversion on. Nothing else is affected either way.
+The deposit address is an ed25519 public key in base58, which Node's own
+crypto makes (`tools/sol/keys.js`), so every account has one from birth and
+the Buy tab always shows it.
 
 If `commit` does not match `git rev-parse HEAD`, the deploy did not take. The
 service worker is network-first and never caches `/api`, so a stale screen is

@@ -39,9 +39,9 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
   /* --- 0. the rail is on only once the Wormhole SDK has actually loaded --- */
   {
     funding.configure({ dataDir: fresh(), demo: true, network: "mainnet" });
-    assert.ok(await funding._sdkReady(), "the Wormhole SDK loads");
-    assert.ok(funding._solRail().enabled, "the Solana packages are installed and probed, so the rail is on");
-    console.log("✓ the rail advertises itself only after the SDK is known to load");
+    assert.ok(await funding._sdkReady(), "the Solana modules load");
+    assert.ok(funding._solRail().enabled, "the rail runs on plain JSON-RPC, so it is on with nothing extra installed");
+    console.log("✓ the rail is on without any optional package");
   }
 
   /* --- 1. what may move --- */
@@ -85,15 +85,20 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
   }
 
   /* --- 3. the VAA and the hash Ethereum keys on --- */
-  {
-    const { connect } = await wormhole.loadSdk();
+  vaaChecks: {
+    /* VAAs for these checks are built with the real SDK where it happens to be
+       installed; tests/wormhole-lite.test.js is what pins the parser against
+       it properly, so here we simply skip when it is absent. */
+    let connect = null;
+    try { connect = require("@wormhole-foundation/sdk-connect"); } catch (_) {}
+    if (!connect) { console.log("• sdk-connect absent — VAA shapes are covered by wormhole-lite.test.js"); break vaaChecks; }
     const transit = "0x1234567890AbcdEF1234567890aBcdef12345678";
     const vaa = connect.createVAA("TokenBridge:Transfer", {
       guardianSet: 4, timestamp: 1700000000, nonce: 0, emitterChain: "Solana",
       emitterAddress: new connect.UniversalAddress("0x" + "ec".repeat(32)), sequence: 4242n, consistencyLevel: 32, signatures: [],
       payload: {
-        token: { amount: 660000000n, address: wormhole.universalEth(connect, SC.VKOIN_ETH), chain: "Ethereum" },
-        to: { address: wormhole.universalEth(connect, transit), chain: "Ethereum" }, fee: 0n,
+        token: { amount: 660000000n, address: new connect.UniversalAddress(ethers.zeroPadValue(SC.VKOIN_ETH, 32)), chain: "Ethereum" },
+        to: { address: new connect.UniversalAddress(ethers.zeroPadValue(transit, 32)), chain: "Ethereum" }, fee: 0n,
       },
     });
     const bytes = connect.serialize(vaa);
@@ -110,7 +115,7 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     const other = connect.createVAA("TokenBridge:Transfer", {
       guardianSet: 4, timestamp: 1, nonce: 0, emitterChain: "Solana", emitterAddress: new connect.UniversalAddress("0x" + "ec".repeat(32)),
       sequence: 1n, consistencyLevel: 32, signatures: [],
-      payload: { token: { amount: 1n, address: wormhole.universalEth(connect, "0x" + "22".repeat(20)), chain: "Ethereum" }, to: { address: wormhole.universalEth(connect, transit), chain: "Ethereum" }, fee: 0n },
+      payload: { token: { amount: 1n, address: new connect.UniversalAddress(ethers.zeroPadValue("0x" + "22".repeat(20), 32)), chain: "Ethereum" }, to: { address: new connect.UniversalAddress(ethers.zeroPadValue(transit, 32)), chain: "Ethereum" }, fee: 0n },
     });
     await assert.rejects(wormhole.parseTransferVaa(ethers.hexlify(connect.serialize(other))), /not a vKOIN transfer/);
     const tx = wormhole.buildCompleteTransferTx(hex);
@@ -125,8 +130,8 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
       guardianSet: 4, timestamp: 1700000000, nonce: 0, emitterChain: "Solana",
       emitterAddress: new connect.UniversalAddress("0x" + "ec".repeat(32)), sequence: 99n, consistencyLevel: 32, signatures: [],
       payload: {
-        token: { amount: 4000000n, address: wormhole.universalEth(connect, SC.WETH_ETH), chain: "Ethereum" },
-        to: { address: wormhole.universalEth(connect, transit), chain: "Ethereum" }, fee: 0n,
+        token: { amount: 4000000n, address: new connect.UniversalAddress(ethers.zeroPadValue(SC.WETH_ETH, 32)), chain: "Ethereum" },
+        to: { address: new connect.UniversalAddress(ethers.zeroPadValue(transit, 32)), chain: "Ethereum" }, fee: 0n,
       },
     });
     const wethHex = ethers.hexlify(connect.serialize(wethVaa));

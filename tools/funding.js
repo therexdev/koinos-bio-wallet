@@ -75,21 +75,14 @@ const solKeys = require("./sol/keys");
    go through the Solana packages either — a person must be able to see their
    own money whether or not this host can convert it. */
 const solLite = require("./sol/rpc-lite");
+/* No optional packages any more: the Solana side is plain JSON-RPC and Node's
+   own crypto (tools/sol/*-lite.js), so the rail cannot be switched off by an
+   install that skipped something. The guard stays only for the impossible
+   case, so a broken file degrades instead of taking the wallet down. */
 let sol = null, wormhole = null, SOL_LOAD_ERROR = null;
 try { sol = require("./sol/sol-rpc"); wormhole = require("./sol/wormhole"); }
 catch (e) { SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; }
-/* The Wormhole SDK is ESM and loads lazily; the rail must not advertise
-   itself on the strength of the CommonJS requires alone, or a swap could
-   run and the bridge leg then find no SDK. configure() probes it. */
-let SDK_STATE = wormhole ? "unknown" : "failed";
-function probeSdk() {
-  if (!wormhole) return Promise.resolve(false);
-  if (SDK_STATE === "ok") return Promise.resolve(true);
-  return wormhole.loadSdk().then(
-    () => { SDK_STATE = "ok"; return true; },
-    (e) => { SDK_STATE = "failed"; SOL_LOAD_ERROR = String(e.message || e).split("\n")[0]; return false; },
-  );
-}
+const probeSdk = () => Promise.resolve(!!(sol && wormhole));
 
 const S = {
   dataDir: path.join(__dirname, "..", "data"),
@@ -247,10 +240,9 @@ function dropProvider() { _ethProvider = null; _solConn = null; if (wormhole) wo
 
 /** Is Route S usable on this server? */
 function solRail() {
-  if (!sol || !wormhole || SDK_STATE === "failed") {
-    return { enabled: false, reason: "Solana support is not installed on this server" + (SOL_LOAD_ERROR ? ` (${SOL_LOAD_ERROR})` : "") };
+  if (!sol || !wormhole) {
+    return { enabled: false, reason: "the Solana modules failed to load" + (SOL_LOAD_ERROR ? ` (${SOL_LOAD_ERROR})` : "") };
   }
-  if (SDK_STATE !== "ok") return { enabled: false, reason: "Solana support is still loading — try again in a moment" };
   return { enabled: true };
 }
 const railOn = () => solRail().enabled;
@@ -1129,7 +1121,7 @@ async function advanceSol(account, j) {
       if ((j.resends || 0) > 3) throw new Error(`The SOL → ${bought} swap keeps expiring before it confirms — Retry when Solana is less busy`);
       const q = await jup.quote({ amount: j.solLamports, slippageBps: j.slippageBps, outputMint: mint });
       const tx = await jup.swapTx({ quote: q, userPublicKey: t.solAddress });
-      const sig = await sol.signAndSend(c, sol.keypairFrom(t.solSecret), tx.swapTransaction);
+      const sig = await sol.signAndSend(c, t.solSecret, tx.swapTransaction);
       return saveJob(account, { ...j, pendingSig: sig, pendingSigExpiry: tx.lastValidBlockHeight, minTokenOut: q.outAmountMin, solTokenBefore: have.toString() });
     }
     case "sol_bridge": {
