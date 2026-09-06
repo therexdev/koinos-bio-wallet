@@ -97,6 +97,18 @@ jobs:
           KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          # MISSING is not WRONG, and saying the wrong one sends someone off
+          # to re-check a password that was never the problem. An unset
+          # secret arrives as empty string, so name the empty ones first.
+          MISSING=
+          [ -n "$B64" ]       || MISSING="$MISSING ANDROID_KEYSTORE_BASE64"
+          [ -n "$STOREPASS" ] || MISSING="$MISSING ANDROID_KEYSTORE_PASSWORD"
+          [ -n "$KEYPASS" ]   || MISSING="$MISSING ANDROID_KEY_PASSWORD"
+          [ -n "$ALIAS" ]     || MISSING="$MISSING ANDROID_KEY_ALIAS"
+          if [ -n "$MISSING" ]; then
+            echo "::error::These signing secrets are not set:$MISSING — the build cannot sign without all four. Run 'bash android/tools/setup-signing.sh' in a codespace: it sets every one of them for you, with nothing to copy."
+            exit 1
+          fi
           KS="$RUNNER_TEMP/release.jks"
           printf '%s' "$B64" | tr -d '[:space:]' | base64 -d > "$KS" 2>/dev/null || true
           SIZE=$(stat -c%s "$KS" 2>/dev/null || echo 0)
