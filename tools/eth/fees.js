@@ -92,13 +92,22 @@ function assess({ feeUsd, valueUsd, sponsoredUsd = 0, cfg = config() }) {
     what it cost, so the number of jobs cancels out and the exposure is simply
     the sweep threshold discounted by the buffer, whatever the job size. The
     concurrency term covers jobs already in flight when a sweep fires. */
-function floatPlan({ swapCostWei, maxSponsoredWei, concurrent = 5, cfg = config() }) {
+function floatPlan({ swapCostWei, maxSponsoredWei, routeCostWei = 0, concurrent = 5, cfg = config() }) {
   const swap = BigInt(swapCostWei);
   const sweepAt = swap * BigInt(Math.round(cfg.sweepMultiple));
   const exposure = (sweepAt * 100n) / BigInt(100 + Math.round(cfg.bufferPct));
-  const inFlight = BigInt(maxSponsoredWei) * BigInt(concurrent);
+  /* What a job actually borrows, which is the cost of its Ethereum legs —
+     capped by the per-job ceiling, not EQUAL to it. Using the ceiling made
+     the float look starved whenever gas was cheap: at 0.11 gwei a whole
+     route costs about seventeen cents, and a float holding $43 was reported
+     unhealthy for want of $100 it could never have lent out. That number is
+     read by someone deciding how much money to put in. */
+  const cap = BigInt(maxSponsoredWei);
+  const route = BigInt(routeCostWei || 0);
+  const perJobWei = route > 0n && route < cap ? route : cap;
+  const inFlight = perJobWei * BigInt(concurrent);
   const required = exposure + inFlight;
-  const perJob = BigInt(maxSponsoredWei) || 1n;
+  const perJob = perJobWei || 1n;
   return {
     sweepAtWei: sweepAt, exposureWei: exposure, inFlightWei: inFlight,
     requiredWei: required,

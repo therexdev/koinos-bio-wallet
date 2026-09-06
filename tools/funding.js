@@ -1439,12 +1439,16 @@ async function floatHealth() {
   if (_float.v && Date.now() - _float.at < 60000) return _float.v;
   const p = await ethProvider();
   const wallet = new ethers.Wallet(S.gasSponsorKey, p);
-  const [balance, swapCost, rate] = await Promise.all([
-    p.getBalance(wallet.address), gasCostWei(150000n), ethUsd(p),
+  const [balance, swapCost, routeCost, rate] = await Promise.all([
+    p.getBalance(wallet.address), gasCostWei(150000n),
+    /* The worst case a single job can borrow: route S's whole Ethereum
+       tail, since it arrives holding no ether of its own. */
+    gasCostWei(WH_REDEEM_GAS_UNITS + VORTEX_TAIL_GAS_UNITS),
+    ethUsd(p),
   ]);
   /* The most one job may borrow, expressed in ether at today's price. */
   const maxJobWei = rate > 0 ? ethers.parseEther((S.fee.maxSponsoredUsd / rate).toFixed(18)) : 0n;
-  const plan = fees.floatPlan({ swapCostWei: swapCost, maxSponsoredWei: maxJobWei, cfg: S.fee });
+  const plan = fees.floatPlan({ swapCostWei: swapCost, maxSponsoredWei: maxJobWei, routeCostWei: routeCost, cfg: S.fee });
   const usd = (w) => (rate > 0 ? Number((Number(ethers.formatEther(w)) * rate).toFixed(2)) : undefined);
   const out = {
     sponsored: true, address: wallet.address,
