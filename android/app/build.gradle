@@ -60,4 +60,5 @@ android {
 dependencies {
   // Google's TWA launcher: opens the site in Chrome, full screen, verified.
   implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+  testImplementation 'junit:junit:4.13.2'
 }

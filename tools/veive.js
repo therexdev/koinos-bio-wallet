@@ -93,7 +93,7 @@ const publicView = (rec) => rec && ({
 
 /** Fast path for the create button: mint the record, kick the on-chain
     bootstrap in the background, hand back the address immediately. */
-function createOrResume({ credentialId, publicKey, name }) {
+function createOrResume({ credentialId, publicKey, name, fundingEnabled = true }) {
   if (!CRED_ID.test(String(credentialId || ''))) throw new Error('credential id looks wrong');
   if (!validPublicKey(publicKey)) throw new Error('the passkey did not return a P-256 public key this chain can verify');
 
@@ -120,8 +120,11 @@ function createOrResume({ credentialId, publicKey, name }) {
   S.store.accounts[rec.address] = rec;
   S.store.byCredential[credentialId] = rec.address;
   persist();
-  /* Every account is born with its Ethereum deposit address too. */
-  try { require('./funding').enable(rec.address); } catch (_) {}
+  /* Browser funding is optional. APK-created accounts are wallet-only;
+     opening Buy on the website can provision transit addresses later. */
+  if (fundingEnabled) {
+    try { require('./funding').enable(rec.address); } catch (_) {}
+  }
   if (!S.demo) runBootstrap(rec);
   return publicView(rec);
 }

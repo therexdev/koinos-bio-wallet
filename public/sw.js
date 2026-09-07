@@ -20,10 +20,10 @@
    ============================================================ */
 'use strict';
 
-const CACHE = 'bio-wallet-shell-v3';
+const CACHE = 'bio-wallet-shell-v4';
 const SHELL = [
   '/', '/index.html', '/css/wallet.css', '/manifest.webmanifest',
-  '/js/app.js', '/js/fund.js', '/js/passkey.js', '/js/recovery.js',
+  '/js/client.js', '/js/app.js', '/js/fund.js', '/js/passkey.js', '/js/recovery.js',
   '/js/webauthn-wire.js', '/js/qr.js', '/js/receive.js', '/js/portfolio.js', '/js/ui.js',
   '/js/vendor/qrcode-generator.js',
   '/assets/icon.svg', '/assets/icon-192.png', '/assets/icon-512.png',
@@ -40,7 +40,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    for (const k of await caches.keys()) if (k.startsWith('bio-wallet-shell-') && k !== CACHE) await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -50,6 +50,9 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;     // CDN fonts, explorers — not ours
+  // The APK has its own shell and API scope. In particular, never fall back
+  // to the website's Buy-enabled HTML for an Android navigation.
+  if (url.pathname === '/android' || url.pathname.startsWith('/android/')) return;
   if (url.pathname.startsWith('/api/')) return;         // always live, never cached
 
   event.respondWith((async () => {

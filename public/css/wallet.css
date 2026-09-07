@@ -270,6 +270,14 @@ textarea { font-size: 16px; line-height: 1.5; resize: vertical; margin: 4px 0 10
 
 /* ───────────────────────── home: actions ───────────────────────── */
 .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0 8px; }
+[data-wallet-client="android"] .actions,
+[data-wallet-client="android"] #tabbar { grid-template-columns: repeat(2, 1fr); }
+/* Also keeps a stale browser shell from exposing Buy at an Android URL. */
+[data-wallet-client="android"] #btn-open-buy,
+[data-wallet-client="android"] #tabbtn-convert,
+[data-wallet-client="android"] #tab-convert,
+[data-wallet-client="android"] #deposit-stats,
+[data-wallet-client="android"] #recv-to-buy { display: none !important; }
 .action {
   background: none; border: 0; padding: 4px 0; cursor: pointer; color: var(--text);
   display: flex; flex-direction: column; align-items: center; gap: 8px; font: 600 13px/18px var(--font); min-height: var(--tap);

@@ -17,6 +17,7 @@
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/wallet.css">
+<script src="/js/client.js"></script>
 </head>
 <body>
 
@@ -124,7 +125,9 @@
       <div class="actions">
         <button class="action" id="btn-open-receive" type="button"><span class="circle"><svg class="ic"><use href="#i-receive"/></svg></span><span>Receive</span></button>
         <button class="action" id="btn-open-send" type="button"><span class="circle"><svg class="ic"><use href="#i-send"/></svg></span><span>Send</span></button>
+        <!-- WEB_ONLY_START -->
         <button class="action" id="btn-open-buy" type="button"><span class="circle"><svg class="ic"><use href="#i-plus"/></svg></span><span>Buy</span></button>
+        <!-- WEB_ONLY_END -->
       </div>
 
       <div class="section-head"><span class="eyebrow">Tokens</span><button class="linkish accent" id="btn-add-token" type="button">+ Add token</button></div>
@@ -134,6 +137,7 @@
       </div>
       <p class="hint refresh-note" id="refresh-note" hidden></p>
 
+      <!-- WEB_ONLY_START -->
       <div class="deposit-group" id="deposit-stats" hidden>
         <div class="section-head"><span class="eyebrow">Waiting to convert</span></div>
         <p class="hint sub">Held by the app's funding key until it lands as KOIN. Tap a row to convert.</p>
@@ -160,8 +164,10 @@
           </button>
         </div>
       </div>
+      <!-- WEB_ONLY_END -->
     </div>
 
+    <!-- WEB_ONLY_START -->
     <!-- ── Buy: the Fund card, id for id ── -->
     <div id="tab-convert" class="tab" role="tabpanel" aria-labelledby="tabbtn-convert" hidden>
       <div class="page-head">
@@ -225,6 +231,7 @@
       <p class="hint center">Quotes are live; the best route is marked.</p>
     </div>
 
+    <!-- WEB_ONLY_END -->
     <!-- ── Security ── -->
     <div id="tab-security" class="tab" role="tabpanel" aria-labelledby="tabbtn-security" hidden>
       <div class="page-head"><h2>Security</h2></div>
@@ -308,8 +315,10 @@
       <div class="card about">
         <div class="k">Koinos Bio Wallet</div>
         <p class="hint" id="about-prices">Prices: unavailable</p>
+        <!-- WEB_ONLY_START -->
         <p class="hint">Powered by <a href="https://koinos.io" target="_blank" rel="noopener">Koinos</a> — feeless by design ·
           <a href="https://usekoinos.com" target="_blank" rel="noopener">Discover Koinos ↗</a></p>
+        <!-- WEB_ONLY_END -->
       </div>
 
       <button class="linkish signout" id="btn-signout" type="button"><svg class="ic ic-18"><use href="#i-door"/></svg> Sign out of this device</button>
@@ -406,7 +415,7 @@
         </div>
         <p class="hint" id="recv-amount-note" hidden></p>
       </details>
-      <p class="warn-line">Send only KOIN and Koinos tokens here. To add ETH, USDC or USDT use <a href="#" id="recv-to-buy">Buy</a>.</p>
+      <p class="warn-line">Send only KOIN and Koinos tokens here.<!-- WEB_ONLY_START --> To add ETH, USDC or USDT use <a href="#" id="recv-to-buy">Buy</a>.<!-- WEB_ONLY_END --></p>
     </div>
 
     <div class="sheet" id="sheet-add-token" role="dialog" aria-modal="true" aria-labelledby="add-token-title" tabindex="-1" hidden>
@@ -424,6 +433,7 @@
   </section>
 </main>
 
+<!-- WEB_ONLY_START -->
 <!-- Add to Home Screen. Outside #view-wallet on purpose: it pops up on the
      landing page too, so the account can be created inside the installed app. -->
 <div class="sheet install" id="sheet-install" role="dialog" aria-modal="true" aria-labelledby="install-title" tabindex="-1" hidden>
@@ -449,9 +459,12 @@
   <p class="hint center">Nothing changes on-chain. Your passkey opens the same account either way.</p>
 </div>
 
+<!-- WEB_ONLY_END -->
 <nav id="tabbar" role="tablist" aria-label="Wallet" hidden>
   <button class="tabbtn" id="tabbtn-home" role="tab" aria-selected="true" aria-controls="tab-home" type="button"><span class="ico"><svg class="ic"><use href="#i-wallet"/></svg></span><span>Home</span></button>
+  <!-- WEB_ONLY_START -->
   <button class="tabbtn" id="tabbtn-convert" role="tab" aria-selected="false" aria-controls="tab-convert" type="button" tabindex="-1"><span class="ico"><svg class="ic"><use href="#i-plus"/></svg><span class="tabdot" id="tabdot-convert" hidden></span></span><span>Buy</span></button>
+  <!-- WEB_ONLY_END -->
   <button class="tabbtn" id="tabbtn-security" role="tab" aria-selected="false" aria-controls="tab-security" type="button" tabindex="-1"><span class="ico"><svg class="ic"><use href="#i-shield"/></svg><span class="tabdot" id="tabdot-security" hidden></span></span><span>Security</span></button>
 </nav>
 <div id="scrim" hidden></div>
@@ -460,7 +473,9 @@
 <script src="/js/webauthn-wire.js"></script>
 <script src="/js/passkey.js"></script>
 <script src="/js/recovery.js"></script>
+<!-- WEB_ONLY_START -->
 <script src="/js/fund.js"></script>
+<!-- WEB_ONLY_END -->
 <script src="/js/qr.js"></script>
 <script src="/js/receive.js"></script>
 <script src="/js/portfolio.js"></script>

@@ -77,6 +77,7 @@ const Fund = (() => {
   const DP = { eth: 5, usdc: 2, usdt: 2, sol: 4 };
 
   function mount(ctx) {
+    if (typeof WalletClient !== 'undefined' && !WalletClient.canBuy) return;
     CTX = ctx;
     $('#btn-fund-enable').addEventListener('click', refresh);
     $('#fund-eth-addr').addEventListener('click', () => copyAddr('eth'));

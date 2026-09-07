@@ -1,290 +1,139 @@
-# Google Play listing — everything needed, ready to paste
+# Google Play listing — wallet-only Android build
 
 App: **Koinos Bio Wallet** · package `wallet.koinos.app`
-Console: <https://play.google.com/console> → your app → the sections below.
 
-Every asset here is generated from the app itself (`android/tools/gen-icons.js`
-for the icon, `play/` for the rest) and is already the size Play requires.
+The current Android build opens `/android/` and offers wallet functions only.
+Buy, swaps, conversion deposit addresses and conversion signing are absent for
+all Android users. The browser and installed PWA retain those features at `/`.
+Use the new AAB; updating listing text alone does not change an older APK.
 
----
+## Store listing copy
 
-## Assets in this folder
+**App name**
 
-| File | Where it goes | Size |
-|---|---|---|
-| `app-icon-512.png` | Store listing → App icon | 512×512 |
-| `feature-graphic-1024x500.png` | Store listing → Feature graphic | 1024×500 |
-| `screenshots/1-welcome.png` … `4-security.png` | Store listing → Phone screenshots | 1080×1920 |
-
-Play needs **at least 2** phone screenshots; four are provided.
-
----
-
-## 1. Store presence → Main store listing
-
-**App name** (30 max)
 ```
 Koinos Bio Wallet
 ```
 
-**Short description** (80 max)
+**Short description**
+
 ```
-A Koinos wallet you open with your fingerprint. No password, no seed phrase.
+Your Koinos wallet, secured by a passkey. Send and receive KOIN without gas fees.
 ```
 
-**Full description** (4000 max)
+**Full description**
+
 ```
-Koinos Bio Wallet is a smart-account wallet for the Koinos blockchain that you
-open with your fingerprint or face. There is no password and no seed phrase to
-write down or lose — your account is created on-chain and secured by a passkey
-held in your device's secure hardware.
+Koinos Bio Wallet is a smart-account wallet for the Koinos blockchain.
+Create or open your account with a device passkey using your fingerprint,
+face or device PIN. No wallet password or seed phrase is required.
 
 WHAT YOU CAN DO
-• Create a Koinos smart account in one scan, secured by your biometrics.
-• Hold and view KOIN, VHP and other Koinos tokens, and your NFTs.
-• Send tokens and NFTs to any Koinos address, or to a Gmail address — the
-  recipient claims it with their own passkey.
-• Add a backup passkey from a second device, so losing a phone is not losing
-  the account.
-• Export a recovery credential that you keep yourself.
-• Top up by converting ETH, USDC, USDT or SOL into KOIN.
+• Create a Koinos smart account secured by your passkey.
+• View your KOIN and VHP balances and track other Koinos tokens.
+• Send KOIN to a Koinos address.
+• Receive Koinos tokens using your address or QR code.
+• Scan a Koinos payment QR code.
+• Register a backup passkey and create an offline recovery kit.
 
-NO NETWORK FEES
-Koinos transactions cost no gas. Sending KOIN or an NFT from this wallet is
-free — the network's mana is sponsored, so you never have to buy a token just
-to be allowed to move one.
+KOINOS WITHOUT GAS FEES
+Koinos uses regenerating mana instead of gas fees. This wallet sponsors mana
+for supported transactions, subject to available capacity and usage limits.
 
-HOW IT IS SECURED
-Your passkey never leaves your device and cannot be exported by the app. Every
-transaction is signed on your phone by your own biometric, and the account's
-authority lives in a smart contract on Koinos, not on our servers. We cannot
-move your funds, freeze them, or recover them for you.
+YOU AUTHORIZE YOUR TRANSACTIONS
+Your account is an on-chain smart contract. Your registered credentials
+approve transactions, and the blockchain verifies them. Keep a backup passkey
+or recovery kit so you can regain access if you lose your device.
 
-OPEN AND VERIFIABLE
-Balances, transfers and account authority are all on the public Koinos
-blockchain, so anything the app tells you can be checked independently.
+The Android app provides wallet functionality. It does not offer cryptocurrency
+purchases, exchanges or swaps.
 
 Built on the Veive smart-account protocol.
 ```
 
-**App icon** → `app-icon-512.png`
-**Feature graphic** → `feature-graphic-1024x500.png`
-**Phone screenshots** → all four in `screenshots/`
+## Assets
 
----
+- `app-icon-512.png`: app icon, 512×512.
+- `feature-graphic-1024x500.png`: feature graphic, 1024×500.
+- `screenshots/1-welcome.png`: existing welcome screenshot.
 
-## 2. Store settings
+The old Home, Buy and Security screenshots were removed because they showed
+the Buy navigation. **Capture at least two current phone screenshots from the
+new APK before submitting the listing**: Home, Receive and Security are useful
+choices. Do not reuse screenshots from the browser/PWA.
+
+For local visual QA with sample data only, run
+`node play/preview.js /absolute/output/directory` and open `android-frame.html`
+in a local browser. This fixture uses the real template, styles and UI module;
+it does not test sign-in, signing, device integration or live balances. Store
+screenshots should come from the installed Android app.
+
+## Store settings and public pages
 
 | Field | Value |
 |---|---|
-| App category | **Finance** |
-| Tags | Crypto wallet, Blockchain, Finance |
-| Store listing contact — email | `support@usekoinos.com` |
-| Store listing contact — website | `https://wallet.usekoinos.com` |
-| External marketing | leave unchecked unless you run ads |
+| Category | Finance |
+| Contact email | support@usekoinos.com |
+| Website | https://wallet.usekoinos.com/android/ |
+| Privacy policy | https://wallet.usekoinos.com/android/privacy |
+| Account/data deletion URL | https://wallet.usekoinos.com/android/delete-account |
 
----
+These public legal pages need no sign-in and link back to the Android surface.
+They explain that any conversion data comes from browser/PWA use. The same
+account may have historical browser conversion records.
 
-## 3. App content (left menu → "App content")
+## App access instructions
 
-Each item below is a separate form. All of them must be green before the
-release can go out.
-
-### Privacy policy
-```
-https://wallet.usekoinos.com/privacy
-```
-
-### Deletion URLs — the SAME page answers both questions
-Play asks twice, for two different things. Give this URL to both:
-```
-https://wallet.usekoinos.com/delete-account
-```
-- *"request that their account and associated data is deleted"* → the page's
-  first section, the three steps.
-- *"request that SOME OR ALL of their data is deleted, WITHOUT requiring them
-  to delete their account"* → **Yes**, and the same URL: the page has a
-  separate section for partial deletion (the email address, finished
-  conversion history, a retired passkey ID), each with its own steps.
-
-Do not answer "No, but user data is automatically deleted within 90 days" —
-records are kept for as long as the account exists, so that would be false.
-
-Both pages ship with the site and need no sign-in. The deletion page is
-built against Play's three requirements: it names the app in the heading,
-leads with the three steps in a boxed callout before anything else, and
-gives a table of every data type with its outcome and retention — deleted
-within 30 days, encrypted backups ageing out up to 30 days after that, and
-blockchain transactions marked as permanently undeletable by anyone.
-
-### Sign in details  (was called "App access")
-
-**Answer YES.** "Biometric authentication" is on Play's own list for Yes, and
-this app is gated on it in a way that will fail a review device otherwise:
-`public/js/app.js` disables the only button on the first screen when
-`isUserVerifyingPlatformAuthenticatorAvailable()` is false, which is the case
-on an emulator with no screen lock enrolled. A reviewer who cannot get past
-screen one is a rejection.
-
-There is no username or password to hand over — leave those blank and paste
-this into **"Any other instructions"**. That field caps at **500 characters**;
-this is 486, so it goes in whole. (The support address is left out on purpose:
-Play already has it from the store listing contact details.)
+There is no shared reviewer username or password. Reviewers need a device with
+Chrome and a screen lock enrolled. Supply this in the app-access instructions:
 
 ```
-No username or password: sign-in is a device passkey (WebAuthn).
-
-Review on a device or emulator WITH A SCREEN LOCK ENROLLED (Settings > Security > Screen lock). Without one Android reports no platform authenticator and the sign-in button is disabled.
-
-1. Enrol any screen lock (PIN is fine).
-2. Tap "Create my wallet".
-3. Approve the passkey prompt — the device PIN works, no fingerprint hardware needed.
-
-That opens the entire app. Nothing is behind a payment, invite or waiting list.
+Sign-in uses a device passkey, not a username or password. Use an Android device
+with Chrome and a screen lock enrolled (Settings > Security > Screen lock).
+Tap "Create Account or Sign In" and approve the passkey prompt; a device PIN is
+supported. Home, Send, Receive and Security are available after account setup.
+There are no purchases or swaps in the Android app.
 ```
 
-### Ads
-**No, my app does not contain ads.** (There are none — no ad SDK is bundled.)
+## Financial features and data declarations
 
-### Content ratings
-Fill the questionnaire. For this app every answer is **No** — no violence, no
-sexual content, no profanity, no drugs, no gambling. Category: **Utility,
-Productivity, Communication or Other**. It will come out rated for everyone.
+Describe the shipped Android product accurately as a non-custodial wallet with
+no exchange functionality. Google's [Cryptocurrency Exchanges and Software
+Wallets policy](https://support.google.com/googleplay/android-developer/answer/16329703?hl=en)
+states that non-custodial wallets are outside that policy's scope. This does
+not guarantee Play approval or replace the other Play Console declarations.
+Complete the current Console forms based on this build and actual operations.
 
-### Target audience and content
-Target age: **18 and over.** Do not tick any under-18 bracket — a finance app
-aimed at children triggers Families policy requirements you do not want.
+Account addresses, public credential IDs/keys, credential labels, setup records
+and transaction-related records are stored on the server. Balances and public
+transactions are read from blockchain providers. Transport uses HTTPS. The
+privacy and deletion pages describe retention and deletion requests; public
+blockchain records cannot be deleted. Review Data safety answers against those
+pages and your hosting/provider practices rather than copying the previous
+listing's claim that only one data type was collected.
 
-### News app
-**No.**
+## Release
 
-### COVID-19 contact tracing
-**No.**
+1. Deploy the server changes, then use the new APK for the device checks in
+   `android/README.md`.
+2. Download the matching `bio-wallet-<version>.aab` from the
+   [Android release](https://github.com/therexdev/koinos-bio-wallet/releases/tag/android-latest).
+   The `.apk` is for direct phone installation; the `.aab` is for Play Console.
+3. Update the listing and phone screenshots. Upload the AAB to the intended
+   internal/closed testing track and review the release in Play Console.
 
-### Data safety
-This is a long form. The truthful answers:
-
-- Does your app collect or share any of the required user data types? → **Yes**
-- Is all user data encrypted in transit? → **Yes** (the site is HTTPS only)
-- Do you provide a way for users to request data deletion? → **Yes**, email
-  `support@usekoinos.com` (this is stated in the privacy policy)
-
-Data types to declare:
-
-| Type | Collected | Shared | Purpose | Required? | Ephemeral? |
-|---|---|---|---|---|---|
-| **Financial info → Other financial info** (wallet address, on-chain balances) | Yes | No | App functionality | Required | **No** |
-
-That is the ONLY type. Not email — this app has no email input and no email
-handling (`grep -i email server.js tools/` is empty; the send-to-an-address
-feature is in the gateway site, a different app). No name, no location, no
-contacts, no photos, no messages, no analytics identifiers, no advertising ID,
-no device IDs. There are no third-party SDKs in this app.
-
-**"Is this data processed ephemerally?" → No.** Ephemeral means memory only.
-The account record and any conversion job are written to disk —
-`tools/veive.js:62` and `tools/funding.js:211` — so they outlive the request.
-
-### Government apps
-**No.**
-
-### Financial features  ← read this one carefully
-
-Tick **Crypto exchanges or software wallets**.
-
-Play then asks which of two you are. The facts about this app, so you can
-answer accurately:
-
-- Holdings are **non-custodial** — the user's KOIN lives in a Koinos smart
-  contract only their passkey can authorise.
-- The Buy feature **converts** ETH / USDC / USDT / SOL into KOIN, and while a
-  conversion is in flight the funds sit at addresses the app controls. The app
-  says so on screen before the user starts.
-
-The conversion feature is exchange-shaped, and the crypto-exchange category
-requires licensing in a number of countries. Two ways forward:
-
-1. Declare the **software (non-custodial) wallet** and limit distribution to
-   countries where that is sufficient. Fastest route to testing.
-2. Declare **exchange** functionality and be ready with licensing paperwork
-   for the markets that ask for it.
-
-If you would rather remove the ambiguity, the Buy tab can be hidden in the
-Android build so the shipped app is unambiguously a non-custodial wallet.
-
-### Health
-**No health features.** Every answer on this form is No.
-
----
-
-## 4. Release
-
-**Testing → Closed testing** (or Internal testing) → **Create new release**
-
-1. Upload `bio-wallet-<version>.aab` from
-   <https://github.com/therexdev/koinos-bio-wallet/releases/tag/android-latest>
-2. Release name: fills in by itself, e.g. `21 (1.0.21)`
-3. Release notes:
+Suggested release notes:
 
 ```
 <en-US>
-First test build of Koinos Bio Wallet for Android.
-
-The app runs wallet.usekoinos.com full-screen in Chrome, so passkeys, the QR
-scanner and the offline shell behave exactly as they do in the browser.
-
-Please check:
-• Signing in with a passkey (fingerprint or face), and that your wallet loads.
-• The Home, Buy and Security screens, and the long-press launcher shortcuts.
-• That there is NO browser address bar at the top. If you see one, say so.
+Android now provides wallet functions only: Home, Send, Receive and Security.
+Buying and conversions have been removed from the Android app and its shortcuts.
+Existing wallet accounts and passkeys continue to work.
 </en-US>
 ```
 
-4. Add testers by email, save, review, roll out.
-
----
-
-## 5. After the app exists in Play — do not skip
-
-Play re-signs your app with **its own** key, so the certificate the installed
-app presents is not your upload key. Until the site vouches for Google's key,
-the Play-installed app shows a browser URL bar.
-
-1. **Test and release → Setup → App signing**
-2. Copy the **App signing key certificate** SHA-256
-3. On Hostinger set, comma-separated (Google's first, your upload key second):
-
-```
-ANDROID_SHA256_FINGERPRINTS=<google app-signing SHA-256>,<upload key SHA-256>
-```
-
-Your upload key's fingerprint is printed by
-`android/tools/setup-signing.sh` and in each build's job summary.
-
-4. Restart the site, then check:
-   `https://wallet.usekoinos.com/.well-known/assetlinks.json`
-   It must list `wallet.koinos.app` and both fingerprints.
-
----
-
-## 6. Back up the signing key
-
-Once the app is on Play this key is permanent — lose it and the app can never
-be updated.
-
-```bash
-cp ~/koinos-bio-wallet-release.jks ~/.koinos-bio-wallet-keystore-password .
-# download both from the Explorer, then:
-rm koinos-bio-wallet-release.jks .koinos-bio-wallet-keystore-password
-```
-
----
-
-## Regenerating the assets
-
-```bash
-node android/tools/gen-icons.js     # app icons from public/assets/icon.svg
-```
-The feature graphic and screenshots are produced by the scripts described in
-this repository's history; the committed PNGs are what Play expects and only
-need redoing if the design changes.
+Keep the existing signing key and package name for upgrades. Play re-signs the
+AAB with its app-signing certificate; add that certificate's SHA-256 to
+`ANDROID_SHA256_FINGERPRINTS` alongside the existing upload certificate if it
+is not already configured. Check `/.well-known/assetlinks.json` before testing
+the Play-installed version. Main README contains the signing setup details.

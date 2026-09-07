@@ -25,6 +25,8 @@ on:
   push:
     branches: [main]
     paths: ['android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', '.github/workflows/android.yml']
   workflow_dispatch:
     inputs:
       versionName:
@@ -174,7 +176,7 @@ jobs:
 
       - name: Build APK and App Bundle
         working-directory: android
-        run: gradle --no-daemon assembleRelease bundleRelease
+        run: gradle --no-daemon testReleaseUnitTest assembleRelease bundleRelease
 
       - name: Rename outputs
         run: |
