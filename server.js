@@ -28,6 +28,7 @@ const crypto = require('node:crypto');
 const chain = require('./tools/chain');
 const veive = require('./tools/veive');
 const funding = require('./tools/funding');
+const appSurface = require('./tools/app-surface');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
 const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
@@ -188,7 +189,7 @@ const BUILD = (() => {
   return { version, commit: commit ? commit.slice(0, 12) : null };
 })();
 
-api.config = async () => {
+api.config = async (_params, surface = {}) => {
   const net = NETWORKS[CFG.network];
   return {
     ok: true,
@@ -197,11 +198,11 @@ api.config = async () => {
     commit: BUILD.commit || undefined,
     /* Whether the optional Solana packages are installed on this host. The
        reason is only logged, never published — it carries server paths. */
-    solRail: funding._solRail().enabled,
+    solRail: surface.android ? undefined : funding._solRail().enabled,
     /* The gas float, so its health can be seen without a passkey. Everything
        here is already public on Ethereum; cached for a minute because this
        endpoint is hit on every page load. */
-    float: await funding.floatHealth().catch(() => undefined),
+    float: surface.android ? undefined : await funding.floatHealth().catch(() => undefined),
     accountKind: 'veive',
     network: CFG.network,
     networkLabel: net.label,
@@ -221,7 +222,7 @@ api.config = async () => {
 /** One tap on the button, existing account unknown → a smart account is
     born. Answers immediately; the two bootstrap transactions run in the
     background and /api/account-status reports progress. */
-api.createAccount = async (body, ip) => {
+api.createAccount = async (body, ip, surface = {}) => {
   if (rateLimited('create:ip:' + ip, CFG.maxAccountsPerDayIp, 24 * 3600000)) {
     throw httpError(429, 'this connection created several accounts today already — come back tomorrow');
   }
@@ -237,6 +238,7 @@ api.createAccount = async (body, ip) => {
   try {
     const rec = veive.createOrResume({
       credentialId: body.credentialId, publicKey: body.publicKey, name: body.name,
+      fundingEnabled: !surface.android,
     });
     return { ok: true, demo: DEMO || undefined, ...rec };
   } catch (e) { throw httpError(400, e.message); }
@@ -514,9 +516,10 @@ api.prepare = async (body, ip) => {
 /** Broadcast a signed prepared transaction (sponsor co-signs as payer).
     Smart accounts sign with the passkey — the WebAuthn blob is checked for
     shape, credential and challenge here, then verified for real ON-CHAIN. */
-api.submit = async (body) => {
+api.submit = async (body, _ip, surface = {}) => {
   const known = PREPARED.get(String(body.ref || ''));
   if (!known || known.expires < Date.now()) throw httpError(400, 'this action expired — start it again');
+  if (surface.android && known.fundingTap) throw httpError(403, 'Conversions are not available in the Android app');
   PREPARED.delete(String(body.ref));
   if (known.demo) {
     if (known.smart) await demoCheckSmartSignature(body.transaction, known);
@@ -733,6 +736,10 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
    policy before an app can be published, and a 404 there blocks the listing. */
 const PAGES = {
   '/': 'index.html',
+  '/android': 'index.html',
+  '/android/index.html': 'index.html',
+  '/android/privacy': 'privacy.html',
+  '/android/delete-account': 'delete-account.html',
   '/privacy': 'privacy.html',
   /* Google Play requires a public page where an account and its data can be
      asked for deletion, reachable without signing in. */
@@ -763,13 +770,24 @@ function serveStatic(req, res, pathname) {
       ...(isHtml ? {
         'Content-Security-Policy': CSP,
         'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
+        'Referrer-Policy': appSurface.isAndroidPath(pathname) ? 'same-origin' : 'no-referrer',
       } : {}),
     };
     if (isHtml) {
       fs.readFile(file, 'utf8', (rerr, text) => {
         if (rerr) { res.writeHead(500); return res.end(); }
-        const body = Buffer.from(stampAssets(text));
+        let html = text;
+        try {
+          if (appSurface.isAndroidPath(pathname)) {
+            if (rel === 'index.html') html = appSurface.androidHtml(html);
+            else html = html.replace(/href="\/(privacy|delete-account)?"/g, (_, page) => 'href="/android/' + (page || '') + '"');
+          }
+        } catch (e) {
+          console.error('Unable to render wallet page:', e.message);
+          res.writeHead(500, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+          return res.end('Wallet page temporarily unavailable');
+        }
+        const body = Buffer.from(stampAssets(html));
         res.writeHead(200, { ...headers, 'Content-Length': body.length });
         res.end(body);
       });
@@ -835,15 +853,24 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   try {
-    if (pathname.startsWith('/api/')) {
+    const surface = appSurface.requestSurface(pathname, req.headers);
+    const apiPath = surface.apiPath;
+    if (apiPath.startsWith('/api/')) {
       res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-store');
+      if (surface.android && appSurface.isFundingPath(apiPath)) throw httpError(403, 'Buying and conversions are not available in the Android app');
       if (rateLimited('api:ip:' + clientIp(req), 240, 60000)) throw httpError(429, 'slow down');
       let out;
-      if (req.method === 'GET' && GET_ROUTES[pathname]) {
-        out = await GET_ROUTES[pathname](url.searchParams);
-      } else if (req.method === 'POST' && POST_ROUTES[pathname]) {
+      if (req.method === 'GET' && GET_ROUTES[apiPath]) {
+        if (surface.android && apiPath === '/api/health') url.searchParams.delete('rail');
+        out = await GET_ROUTES[apiPath](url.searchParams, surface);
+        if (apiPath === '/api/config') {
+          out = { ...out, client: surface.android ? 'android' : 'web', features: { buy: !surface.android } };
+          if (surface.android) { delete out.float; delete out.solRail; }
+        }
+      } else if (req.method === 'POST' && POST_ROUTES[apiPath]) {
         const body = await readBody(req);
-        out = await POST_ROUTES[pathname](body, clientIp(req));
+        out = await POST_ROUTES[apiPath](body, clientIp(req), surface);
       } else {
         throw httpError(404, 'no such endpoint');
       }
@@ -851,6 +878,11 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(out));
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if (url.pathname === '/android' || (pathname === '/' && url.searchParams.get('source') === 'twa')) {
+      const open = url.searchParams.get('open');
+      const target = '/android/' + (['send', 'receive'].includes(open) ? '?open=' + open : '');
+      res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' }); return res.end();
+    }
     if (pathname === '/.well-known/assetlinks.json') return serveAssetLinks(res);
     return serveStatic(req, res, pathname);
   } catch (e) {

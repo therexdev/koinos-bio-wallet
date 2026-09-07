@@ -77,7 +77,7 @@ const IDS = {
   ],
 };
 
-const SCRIPT_ORDER = ['webauthn-wire', 'passkey', 'recovery', 'fund', 'qr', 'receive', 'portfolio', 'ui', 'app'];
+const SCRIPT_ORDER = ['client', 'webauthn-wire', 'passkey', 'recovery', 'fund', 'qr', 'receive', 'portfolio', 'ui', 'app'];
 
 /* Elements that must sit INSIDE #view-wallet so show() hides them with it. */
 const INSIDE_WALLET = [

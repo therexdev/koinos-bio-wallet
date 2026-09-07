@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A Trusted Web Activity: the app IS the website, opened in Chrome without
-     browser chrome. Passkeys, the camera scanner, the service worker and the
-     wallet's own install state all keep working because it is still Chrome. -->
+<!-- A Trusted Web Activity for the dedicated /android/ wallet-only surface.
+     The same origin preserves passkeys; the browser/PWA has separate Buy UI. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
   <uses-permission android:name="android.permission.INTERNET"/>
@@ -28,7 +27,7 @@
     <meta-data android:name="web_manifest_url" android:value="@string/web_manifest_url"/>
 
     <activity
-        android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+        android:name="wallet.koinos.app.WalletLauncherActivity"
         android:alwaysRetainTaskState="true"
         android:label="@string/app_name"
         android:exported="true">
@@ -52,14 +51,22 @@
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
 
-      <!-- Links to the site open in the app once the asset links verify. -->
+      <!-- Only APK-specific links open in this app. Website/PWA Buy links
+           must stay in the browser. The launcher also sanitizes explicit intents. -->
       <intent-filter android:autoVerify="true">
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="https" android:host="@string/host_name"/>
+        <data android:scheme="https" android:host="@string/host_name" android:pathPrefix="/android/"/>
       </intent-filter>
     </activity>
+
+    <!-- Previously pinned launcher shortcuts name this component. Keep them
+         working through the same sanitized launcher; an old Buy pin opens Home. -->
+    <activity-alias
+        android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+        android:targetActivity="wallet.koinos.app.WalletLauncherActivity"
+        android:exported="true"/>
 
     <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity"/>
     <activity

@@ -22,7 +22,7 @@
      never touches /api, so nothing about balances or signing changes. */
   if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname === 'localhost')) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+      navigator.serviceWorker.register(WalletClient.serviceWorker, { scope: WalletClient.serviceWorkerScope }).catch(() => {});
     });
   }
   let PENDING_KIT = null;    // a generated-but-unregistered recovery kit
@@ -33,9 +33,10 @@
 
   /* ---------------- api ---------------- */
   async function api(path, body) {
-    const r = await fetch(path, body
-      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-      : undefined);
+    const headers = WalletClient.android ? { 'X-Wallet-Client': 'android' } : {};
+    const r = await fetch(WalletClient.apiPath(path), body
+      ? { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : { headers });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(data.error || 'request failed'); e.status = r.status; throw e; }
     return data;
@@ -87,9 +88,9 @@
     $('#btn-signout').hidden = view !== '#view-wallet';
     UI.onView(view);
     if (view === '#view-wallet') {
-      paint(); Fund.refresh();
+      paint(); if (WalletClient.canBuy) Fund.refresh();
       if (PENDING_INTENT) { UI.applyIntent(PENDING_INTENT); PENDING_INTENT = null; }
-    } else Fund.stop();
+    } else if (WalletClient.canBuy) Fund.stop();
     if (view === '#view-landing') refreshLandingSupport(); // support can change (recovery adds a passkey)
   };
 
@@ -528,13 +529,13 @@
        next tap CREATE a second account instead of signing back in. */
     storeAddr(null);
     try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
-    UI.reset(); Fund.forget();
+    UI.reset(); if (WalletClient.canBuy) Fund.forget();
     show('#view-landing');
     $('#alt-unlock').hidden = false;
   });
 
   /* ---------------- fund card ---------------- */
-  Fund.mount({
+  if (WalletClient.canBuy) Fund.mount({
     api,
     signPrepared,
     credentialId: () => (RECOVERY ? RECOVERY.credentialId : Passkey.storedId()),

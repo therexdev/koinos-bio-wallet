@@ -294,14 +294,25 @@ inside the installed app has its passkey there from day one.
 
 ## Android app
 
-The wallet ships as an Android app without a second codebase: `android/` is a
-**Trusted Web Activity** — Google's own route for putting a PWA on Android,
-the same thing Bubblewrap and PWABuilder generate. The app opens
-https://wallet.usekoinos.com in Chrome, full screen, no URL bar. Because it is
-still Chrome, everything that matters keeps working unchanged: passkeys (a
-WebView cannot do WebAuthn), the camera scanner, the service worker, the
-`?open=` shortcuts. An account made on the website opens in the app and vice
-versa — same origin, same passkey.
+The Android APK is a **Trusted Web Activity** at
+`https://wallet.usekoinos.com/android/`. It provides Home, Send, Receive and
+Security, with no Buy or conversion functionality. The normal website and
+installed PWA at `/` retain Buy. Both use the same origin and passkeys, so
+existing accounts work in either version.
+
+The server removes web-only markup and the funding script from the Android
+page. Android requests use `/android/api/*`; funding routes and funding-step
+submission are rejected on that surface. The launcher only accepts wallet
+intents (Send, Receive, Security), and App Links claim only `/android/`.
+Separate service workers prevent Android from showing the website Buy page
+offline. No shared cookie or storage setting disables Buy in a browser/PWA.
+
+Deploy the server changes before distributing the new APK/AAB. Users need the
+new Android build; older builds can retain old pages or pinned shortcuts until
+updated. The legacy `source=twa` entry redirects to `/android/`. Pending web
+conversions remain available in the browser; the APK does not manage them.
+See `android/README.md` for the release checks and `play/README.md` for listing
+copy that matches the wallet-only build.
 
 **Getting it on a phone.** Every successful build on `main` refreshes the
 `android-latest` pre-release, so the newest APK is always at

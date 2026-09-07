@@ -17,7 +17,7 @@
 const UI = (() => {
   const $ = (s) => document.querySelector(s);
   const byId = (id) => document.getElementById(id);
-  const TABS = ['tab-home', 'tab-convert', 'tab-security'];
+  const TABS = WalletClient.canBuy ? ['tab-home', 'tab-convert', 'tab-security'] : ['tab-home', 'tab-security'];
   const LS_LAST = 'bw_portfolio_last';   // {at, model} — the last good screen, per address
   const reduced = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
@@ -146,6 +146,7 @@ const UI = (() => {
   function applyIntent(intent) {
     if (!intent) return;
     if (intent.tab === 'convert') showTab('tab-convert');
+    else if (intent.tab === 'security') showTab('tab-security');
     if (intent.open === 'receive') openSheet('sheet-receive');
     else if (intent.open === 'send') openSheet('sheet-send');
   }
@@ -663,6 +664,7 @@ const UI = (() => {
       'android' (instructions), or null (installed, or a desktop browser
       with nothing to offer). */
   function installOffer() {
+    if (WalletClient.android) return null;
     const env = installEnv();
     if (env.standalone || lsGet(LS_INSTALLED)) return null;
     if (installPrompt) return 'prompt';
@@ -728,7 +730,8 @@ const UI = (() => {
     byId('btn-install').hidden = !offer;
     byId('ios-install-note').hidden = offer !== 'ios';
     byId('install-generic').hidden = offer !== 'android';
-    byId('installed-note').hidden = !(env.standalone || lsGet(LS_INSTALLED));
+    byId('installed-note').hidden = !(WalletClient.android || env.standalone || lsGet(LS_INSTALLED));
+    if (WalletClient.android) byId('installed-note').textContent = '✓ You are using the Android app.';
     const ready = byId('offline-ready');
     if (ready) ready.hidden = !(navigator.serviceWorker && navigator.serviceWorker.controller);
   }
@@ -867,6 +870,7 @@ const UI = (() => {
     /* install prompt */
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
+      if (WalletClient.android) return;
       installPrompt = e;
       paintInstall();
       /* Chrome fires this a moment after load: upgrade an open recipe sheet
@@ -875,6 +879,7 @@ const UI = (() => {
       else promptInstall();
     });
     window.addEventListener('appinstalled', () => {
+      if (WalletClient.android) return;
       installPrompt = null; lsSet(LS_INSTALLED, '1');
       if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
       toast('Added — open Bio Wallet from your home screen');
