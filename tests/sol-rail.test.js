@@ -51,9 +51,15 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     assert.strictEqual((await sp("0.005")).sats, 0n, "below the reserve nothing moves");
     assert.strictEqual((await sp("0.04")).sats, 0n, "reserve taken, what is left is under the minimum → nothing");
     assert.strictEqual((await sp("0.06")).label, "0.05", "reserve 0.01 off the top, the minimum exactly");
-    assert.strictEqual((await sp("1")).label, "0.5", "the cap holds");
+    assert.strictEqual((await sp("1")).label, "0.99", "the fee reserve still applies below the doubled cap");
+    assert.strictEqual((await sp("1.01")).label, "1.0", "the doubled SOL cap is spendable with the reserve covered");
+    assert.strictEqual((await sp("2")).label, "1.0", "a larger balance is clamped to the doubled SOL cap");
+    const ethSp = (eth) => funding._spendableOf("eth", { ethWei: ethers.parseEther(eth).toString() });
+    assert.strictEqual((await ethSp("0.1")).label, "0.0995", "the ETH gas reserve still applies");
+    assert.strictEqual((await ethSp("0.1005")).label, "0.1", "the doubled ETH cap is spendable with the reserve covered");
+    assert.strictEqual((await ethSp("1")).label, "0.1", "a larger balance is clamped to the doubled ETH cap");
     assert.strictEqual((await funding._spendableOf("sol", {})).sats, 0n, "no Solana balance read → nothing, not a crash");
-    console.log("✓ SOL spendable: reserve, minimum and cap");
+    console.log("✓ ETH/SOL spendable: doubled caps preserve fee reserves and the SOL minimum");
   }
 
   /* --- 2. Jupiter shapes --- */
@@ -177,7 +183,7 @@ const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), "solrail-"));
     const st = await funding.status(ACCT);
     assert.strictEqual(st.solAddress, en.solAddress);
     assert.ok(st.solRail.enabled);
-    assert.strictEqual(st.caps.sol, "0.5");
+    assert.deepStrictEqual(st.caps, { eth: "0.1", stable: "150", sol: "1" });
     assert.strictEqual(st.balances.sol, "0.35");
     assert.strictEqual(st.spendable.sol, "0.34", "0.35 less the 0.01 reserve");
 

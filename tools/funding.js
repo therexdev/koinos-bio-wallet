@@ -91,7 +91,7 @@ const S = {
   dataDir: path.join(__dirname, "..", "data"),
   demo: false,
   network: "mainnet",
-  maxEth: process.env.FUND_MAX_ETH || "0.05",
+  maxEth: process.env.FUND_MAX_ETH || "0.1",
   maxStable: process.env.FUND_MAX_STABLE || "150",
   slippageBps: parseInt(process.env.FUND_SLIPPAGE_BPS || "150", 10),
   gasSponsorKey: (process.env.ETH_GAS_SPONSOR_KEY || "").trim(),
@@ -101,7 +101,7 @@ const S = {
   fee: fees.config(),
   gasPolicy: gasAccounting.config(),
   /* Route S */
-  maxSol: process.env.FUND_MAX_SOL || "0.5",
+  maxSol: process.env.FUND_MAX_SOL || "1",
   /* Ethereum gas sets the real floor for a Solana deposit — below this the
      fees eat the conversion, and the live quote refuses it anyway. */
   minSol: process.env.FUND_MIN_SOL || "0.05",
@@ -1832,6 +1832,7 @@ async function railHealth() {
   };
 
   return {
+    caps: { eth: S.maxEth, stable: S.maxStable, sol: S.maxSol },
     ethRpc: { configured: ethOwn.length, endpoints: ethProbes, verdict: verdict(ethOwn, ethProbes) },
     solanaRpc: { configured: solOwn.length, endpoints: solProbes, verdict: verdict(solOwn, solProbes) },
     /* floatHealth already reports the address, the balance and whether it

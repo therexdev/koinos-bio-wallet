@@ -124,7 +124,7 @@ that battle-tested implementation: `node tests/eth-parity.test.js`):
 USDC and USDT deposits ride Route C's tail (USDC adds one hop through the
 deepest stable pair on Ethereum). The server quotes every route live, shows
 the comparison, and executes the winner. Amounts are capped while the rails
-are new (`FUND_MAX_ETH` 0.05, `FUND_MAX_STABLE` $150, `FUND_MAX_SOL` 0.5).
+are new (`FUND_MAX_ETH` 0.1, `FUND_MAX_STABLE` $150, `FUND_MAX_SOL` 1).
 
 **Why SOL goes through Ethereum.** The vKOIN that trades on Solana (mint
 `8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G`, the Raydium KOIN/SOL pair) is
@@ -530,7 +530,7 @@ node server.js
 | `ETH_RPC` | *(public list)* | Ethereum RPC endpoint(s), comma-separated by priority |
 | `ETH_GAS_SPONSOR_KEY` | — | Ethereum key that fronts gas for stablecoin-only and SOL deposits (optional) |
 | `ETH_GAS_TOPUP` | `0.0015` | legacy setting; new jobs calculate the bootstrap shortfall |
-| `FUND_MAX_ETH` | `0.05` | per-swap ETH cap on the funding rail |
+| `FUND_MAX_ETH` | `0.1` | per-swap ETH cap on the funding rail |
 | `FUND_MAX_STABLE` | `150` | per-swap USDC/USDT cap (USD) |
 | `FUND_SLIPPAGE_BPS` | `150` | slippage floor for every funding swap (1.5%) |
 | `SOLANA_RPC` | *(public list)* | Solana RPC endpoint(s), comma-separated by priority — the public one is rate-limited, set your own |
@@ -550,7 +550,7 @@ node server.js
 | `FUND_GAS_PRICE_HEADROOM_BPS` | `2500` | gas-price headroom (25%) in the quote ceiling |
 | `FUND_QUOTE_TTL_SECONDS` | `60` | time to accept an initial fee quote |
 | `FUND_ETH_CONFIRMATIONS` | `2` | confirmations before recording Ethereum delivery and repayment |
-| `FUND_MAX_SOL` | `0.5` | per-swap SOL cap on the Solana rail |
+| `FUND_MAX_SOL` | `1` | per-swap SOL cap on the Solana rail |
 | `FUND_MIN_SOL` | `0.05` | smallest SOL swap the rail accepts (Ethereum gas sets the floor) |
 | `SOL_RESERVE` | `0.01` | SOL held back at the deposit address for fees and account rent |
 | `DEMO_MODE` | — | `1` forces demo mode |
@@ -600,6 +600,9 @@ than showing nothing.
 ### Checking the settings actually took
 
     https://<host>/api/health?rail=1
+
+The `rail.caps` field reports the active per-swap ETH, stablecoin and SOL limits,
+including any `FUND_MAX_*` environment overrides.
 
 Both RPC settings fall back to public endpoints when they fail. That is right
 for a deposit that must not go dark, and it makes a mistyped key invisible:
