@@ -29,6 +29,7 @@ const chain = require('./tools/chain');
 const veive = require('./tools/veive');
 const funding = require('./tools/funding');
 const appSurface = require('./tools/app-surface');
+const dappRelay = require('./tools/dapp-relay');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
 const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
@@ -86,6 +87,9 @@ const CFG = {
   maxAccountsPerDayIp: parseInt(process.env.MAX_ACCOUNTS_PER_DAY || '3', 10),
   maxAccountsPerDayGlobal: parseInt(process.env.MAX_ACCOUNTS_PER_DAY_GLOBAL || '20', 10),
   maxCredentialsPerAccount: parseInt(process.env.MAX_CREDENTIALS_PER_ACCOUNT || '6', 10),
+  dappOrigins: String(process.env.DAPP_ORIGINS || 'https://trade.koinoskit.site,https://app.tradekoinos.com')
+    .split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
+  publicUrl: String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, ''),
   demo: process.env.DEMO_MODE === '1',
 };
 
@@ -161,6 +165,106 @@ const explorerTx = (txid) => (NETWORKS[CFG.network].explorer ? `${NETWORKS[CFG.n
 /* ---------------- API ---------------- */
 
 const api = {};
+
+function dappSession(body) {
+  const session = dappRelay.get(body && (body.sessionId || body.id), body && body.secret);
+  if (!session) throw httpError(404, 'connection not found or expired');
+  return session;
+}
+
+api.dappCreate = async (body, _ip, _surface, req) => {
+  const origin = String(req.headers.origin || '').replace(/\/+$/, '');
+  if (!CFG.dappOrigins.includes(origin)) throw httpError(403, 'this app origin is not allowed');
+  const made = dappRelay.create({ origin, name: body.name, icon: body.icon });
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwardedProto || (req.socket.encrypted ? 'https' : 'http');
+  const base = CFG.publicUrl || `${proto}://${req.headers.host}`;
+  return {
+    ok: true, sessionId: made.id, secret: made.secret, expiresAt: made.expiresAt,
+    uri: `${base}/?connect=${encodeURIComponent(made.id)}&secret=${encodeURIComponent(made.secret)}`,
+  };
+};
+
+api.dappStatus = async (query) => {
+  const session = dappRelay.get(query.get('sessionId'), query.get('secret'));
+  if (!session) throw httpError(404, 'connection not found or expired');
+  return { ok: true, ...dappRelay.publicSession(session) };
+};
+
+api.dappConnect = async (body) => {
+  const session = dappSession(body);
+  const address = String(body.address || '');
+  const credentialId = String(body.credentialId || '');
+  const rec = veive.status(credentialId);
+  if (!rec || rec.address !== address || rec.step !== 'active') throw httpError(403, 'unlock this wallet before connecting');
+  return { ok: true, ...dappRelay.connect(session, address) };
+};
+
+api.dappRequest = async (body, ip, _surface, req) => {
+  const session = dappSession(body);
+  if (String(req.headers.origin || '').replace(/\/+$/, '') !== session.origin) throw httpError(403, 'connection origin does not match');
+  if (rateLimited('dapp:req:' + session.address, 30, 60000) || rateLimited('dapp:ip:' + ip, 60, 60000)) {
+    throw httpError(429, 'too many signing requests');
+  }
+  let operations;
+  try { operations = dappRelay.validateOperations(body.operations); }
+  catch (e) { throw httpError(400, e.message); }
+  let tx;
+  if (DEMO) tx = { id: demoTxid() };
+  else {
+    try { await veive.ensureReady(session.address); }
+    catch (e) { throw httpError(409, e.message); }
+    const sponsorMana = await chain.mana(chain.sponsorAddress());
+    if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana');
+    tx = await chain.prepareUserTx(session.address, operations, { rcLimit: chain.K.rcLimitSmart });
+  }
+  const request = dappRelay.addRequest(session, { operations, summary: body.summary, transaction: tx });
+  return { ok: true, requestId: request.id, expiresAt: request.expires };
+};
+
+api.dappPending = async (query) => {
+  const session = dappRelay.get(query.get('sessionId'), query.get('secret'));
+  if (!session) throw httpError(404, 'connection not found or expired');
+  return { ok: true, app: dappRelay.publicSession(session), requests: dappRelay.pending(session) };
+};
+
+api.dappApprove = async (body) => {
+  const session = dappSession(body);
+  const request = dappRelay.request(session, body.requestId);
+  if (!request || request.status !== 'pending') throw httpError(404, 'signing request not found or already handled');
+  try {
+    let txid;
+    if (DEMO) {
+      await demoCheckSmartSignature(body.transaction, { txId: request.transaction.id, address: session.address });
+      txid = request.transaction.id;
+    } else {
+      txid = await chain.submitSmartCosigned(body.transaction, request.transaction.id, session.address, veive.credentialsFor(session.address));
+    }
+    dappRelay.settle(request, 'approved', { txid });
+    return { ok: true, txid, explorer: explorerTx(txid) };
+  } catch (e) {
+    dappRelay.settle(request, 'failed', { error: String(e.message || e).slice(0, 240) });
+    throw e;
+  }
+};
+
+api.dappReject = async (body) => {
+  const session = dappSession(body);
+  const request = dappRelay.request(session, body.requestId);
+  if (!request || request.status !== 'pending') throw httpError(404, 'signing request not found');
+  dappRelay.settle(request, 'rejected');
+  return { ok: true };
+};
+
+api.dappRequestStatus = async (query) => {
+  const session = dappRelay.get(query.get('sessionId'), query.get('secret'));
+  if (!session) throw httpError(404, 'connection not found or expired');
+  const request = dappRelay.request(session, query.get('requestId'));
+  if (!request) throw httpError(404, 'signing request not found');
+  return { ok: true, status: request.status, txid: request.txid, error: request.error };
+};
+
+api.dappDisconnect = async (body) => { dappRelay.disconnect(dappSession(body)); return { ok: true }; };
 
 /** What is actually running here.
 
@@ -838,6 +942,8 @@ const GET_ROUTES = {
   '/api/config': api.config, '/api/account': api.account, '/api/portfolio': api.portfolio,
   '/api/account-status': api.accountStatus, '/api/health': api.health,
   '/api/fund/status': api.fundStatus, '/api/diagnose': api.diagnose,
+  '/api/dapp/status': api.dappStatus, '/api/dapp/pending': api.dappPending,
+  '/api/dapp/request-status': api.dappRequestStatus,
 };
 const POST_ROUTES = {
   '/api/create-account': api.createAccount, '/api/whoami': api.whoami,
@@ -847,6 +953,9 @@ const POST_ROUTES = {
   '/api/fund/quote': api.fundQuote,
   '/api/fund/prepare-step': api.fundPrepareStep,
   '/api/fund/resume': api.fundResume, '/api/fund/reset': api.fundReset,
+  '/api/dapp/create': api.dappCreate, '/api/dapp/connect': api.dappConnect,
+  '/api/dapp/request': api.dappRequest, '/api/dapp/approve': api.dappApprove,
+  '/api/dapp/reject': api.dappReject, '/api/dapp/disconnect': api.dappDisconnect,
 };
 
 const server = http.createServer(async (req, res) => {
@@ -856,6 +965,14 @@ const server = http.createServer(async (req, res) => {
     const surface = appSurface.requestSurface(pathname, req.headers);
     const apiPath = surface.apiPath;
     if (apiPath.startsWith('/api/')) {
+      const origin = String(req.headers.origin || '').replace(/\/+$/, '');
+      if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      }
+      if (req.method === 'OPTIONS' && apiPath.startsWith('/api/dapp/')) { res.writeHead(204); return res.end(); }
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Cache-Control', 'no-store');
       if (surface.android && appSurface.isFundingPath(apiPath)) throw httpError(403, 'Buying and conversions are not available in the Android app');
@@ -870,7 +987,7 @@ const server = http.createServer(async (req, res) => {
         }
       } else if (req.method === 'POST' && POST_ROUTES[apiPath]) {
         const body = await readBody(req);
-        out = await POST_ROUTES[apiPath](body, clientIp(req), surface);
+        out = await POST_ROUTES[apiPath](body, clientIp(req), surface, req);
       } else {
         throw httpError(404, 'no such endpoint');
       }

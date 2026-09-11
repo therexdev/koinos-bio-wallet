@@ -179,7 +179,7 @@ const QR = (() => {
             try { hit = await decode(video); } catch (_) { /* one bad frame */ }
             if (hit) {
               const parsed = parse(hit);
-              if (parsed && parsed.address) return finish(parsed);
+              if (parsed && parsed.address) return finish({ ...parsed, raw: String(hit) });
             }
             raf = requestAnimationFrame(tick);
           };

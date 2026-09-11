@@ -269,8 +269,8 @@ textarea { font-size: 16px; line-height: 1.5; resize: vertical; margin: 4px 0 10
 .dot.bad { background: var(--bad); }
 
 /* ───────────────────────── home: actions ───────────────────────── */
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0 8px; }
-[data-wallet-client="android"] .actions,
+.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 8px; }
+[data-wallet-client="android"] .actions { grid-template-columns: repeat(3, 1fr); }
 [data-wallet-client="android"] #tabbar { grid-template-columns: repeat(2, 1fr); }
 /* Also keeps a stale browser shell from exposing Buy at an Android URL. */
 [data-wallet-client="android"] #btn-open-buy,

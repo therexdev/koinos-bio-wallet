@@ -556,6 +556,14 @@ node server.js
 | `DEMO_MODE` | — | `1` forces demo mode |
 | `ANDROID_SHA256_FINGERPRINTS` | — | SHA-256 fingerprint(s) of the Android app's signing certificate, comma-separated — serves `/.well-known/assetlinks.json` (see **Android app**) |
 | `ANDROID_PACKAGE` | `wallet.koinos.app` | the Android app's package name |
+| `DAPP_ORIGINS` | Trade Koinos production origins | comma-separated HTTPS origins allowed to create Bio Wallet connection sessions |
+| `PUBLIC_URL` | request host | canonical wallet origin used in connection QR codes (recommended behind a proxy) |
+
+## Connect to Koinos apps
+
+The Home screen's **Connect** button scans an expiring QR code from a supported app. The QR contains only a random session id and secret. It never contains a private key, passkey, or reusable signature. Connected apps may request contract-call transactions; Bio Wallet rebuilds each transaction with the smart account as payee, shows the requesting site and contract calls, and requires a fresh passkey approval before the sponsor co-signs and broadcasts it. Sessions expire after 30 minutes, requests after 10 minutes, and the user can reject a request or disconnect the app at any time.
+
+Set `DAPP_ORIGINS` to the exact deployed origins. Do not use `*`; origin allowlisting and the per-session secret are separate protections.
 
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says
 why on `/api/config`.
