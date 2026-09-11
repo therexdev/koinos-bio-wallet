@@ -28,6 +28,9 @@ const IDS = {
     'view-recover', 'activation', 'kit-input', 'recover-status', 'bal', 'mana', 'cred-list', 'kit-armed',
     'recovery-banner', 'backup-nudge', 'backup-status', 'backup-box', 'kit-box', 'kit-text', 'send-to',
     'send-amount', 'send-status',
+    'btn-connect-app', 'btn-connect-app-security', 'dapp-status', 'dapp-request', 'dapp-title',
+    'dapp-detail', 'dapp-name', 'dapp-origin', 'dapp-ops', 'dapp-network',
+    'btn-dapp-reject', 'btn-dapp-approve', 'btn-dapp-disconnect',
   ],
   'fund.js': [
     'btn-fund-enable', 'fund-eth-addr', 'btn-fund-land', 'btn-fund-retry', 'btn-fund-reset', 'fund-assets',

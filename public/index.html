@@ -125,6 +125,7 @@
       <div class="actions">
         <button class="action" id="btn-open-receive" type="button"><span class="circle"><svg class="ic"><use href="#i-receive"/></svg></span><span>Receive</span></button>
         <button class="action" id="btn-open-send" type="button"><span class="circle"><svg class="ic"><use href="#i-send"/></svg></span><span>Send</span></button>
+        <button class="action" id="btn-connect-app" type="button"><span class="circle"><svg class="ic"><use href="#i-qr"/></svg></span><span>Connect</span></button>
         <!-- WEB_ONLY_START -->
         <button class="action" id="btn-open-buy" type="button"><span class="circle"><svg class="ic"><use href="#i-plus"/></svg></span><span>Buy</span></button>
         <!-- WEB_ONLY_END -->
@@ -235,6 +236,31 @@
     <!-- ── Security ── -->
     <div id="tab-security" class="tab" role="tabpanel" aria-labelledby="tabbtn-security" hidden>
       <div class="page-head"><h2>Security</h2></div>
+
+      <div class="card">
+        <div class="k">Connected apps</div>
+        <p class="hint">Scan a connection QR from a Koinos app. Every transaction still needs your passkey approval.</p>
+        <div class="status" id="dapp-status" role="status" aria-live="polite" hidden></div>
+        <div id="dapp-request" hidden>
+          <h3 id="dapp-title">Transaction request</h3>
+          <p class="sub" id="dapp-detail"></p>
+          <dl class="details">
+            <div><dt>App</dt><dd id="dapp-name"></dd></div>
+            <div><dt>Site</dt><dd class="mono" id="dapp-origin"></dd></div>
+            <div><dt>Contract calls</dt><dd id="dapp-ops"></dd></div>
+            <div><dt>Network</dt><dd id="dapp-network"></dd></div>
+          </dl>
+          <p class="foot">Check the app and action carefully. Your passkey signs the exact transaction shown here.</p>
+          <div class="btn-row two">
+            <button class="ghost" id="btn-dapp-reject" type="button">Reject</button>
+            <button class="cta small lock" id="btn-dapp-approve" type="button">Approve with passkey</button>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="ghost wide" id="btn-connect-app-security" type="button"><svg class="ic ic-18"><use href="#i-qr"/></svg> Scan connection QR</button>
+          <button class="linkish danger block" id="btn-dapp-disconnect" type="button" hidden>Disconnect app</button>
+        </div>
+      </div>
 
       <div class="card">
         <div class="meter" id="protect-meter" aria-hidden="true"><span></span><span></span><span></span></div>
