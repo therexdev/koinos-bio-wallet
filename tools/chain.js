@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { Signer, Provider, Contract, Transaction, Serializer, utils } = require('koilib');
 const { NETWORKS, rpcCandidates } = require('./rpc');
+const { installFailover } = require('./rpc-failover');
 
 function sanitizeAbi(abi) {
   const out = JSON.parse(JSON.stringify(abi));
@@ -69,16 +70,7 @@ const enabled = () => !!K.sponsorWif;
 
 function provider() {
   if (!_provider) {
-    _provider = new Provider(K.rpcs.slice());
-    // koilib's fetch has no timeout: race every call against a 25s clock.
-    const rawCall = _provider.call.bind(_provider);
-    _provider.call = (method, params) => Promise.race([
-      rawCall(method, params),
-      new Promise((_, reject) => {
-        const t = setTimeout(() => reject(new Error(`koinos rpc timeout (${method})`)), 25000);
-        if (t.unref) t.unref();
-      }),
-    ]);
+    _provider = installFailover(new Provider(K.rpcs.slice()));
   }
   return _provider;
 }
