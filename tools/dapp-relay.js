@@ -39,7 +39,6 @@ function get(id, secret) {
   prune();
   const session = sessions.get(String(id || ''));
   if (!session || !sameSecret(session.secret, secret)) return null;
-  session.expires = Date.now() + SESSION_TTL;
   return session;
 }
 
@@ -66,6 +65,7 @@ function validateOperations(operations) {
   for (const operation of operations) {
     if (!operation || typeof operation !== 'object' || Array.isArray(operation)) throw new Error('invalid operation');
     if (!operation.call_contract) throw new Error('connected apps may request contract calls only');
+    if (Object.keys(operation).length !== 1) throw new Error('mixed operation types are not allowed');
     const call = operation.call_contract;
     if (!/^1[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(String(call.contract_id || ''))) throw new Error('invalid contract address');
     if (!/^\d+$/.test(String(call.entry_point ?? ''))) throw new Error('invalid contract entry point');

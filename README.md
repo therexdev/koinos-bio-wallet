@@ -561,6 +561,8 @@ node server.js
 
 ## Connect to Koinos apps
 
+Connection approvals require a fresh WebAuthn assertion, checked for origin, relying-party ID, user presence and user verification, then verified against the account on-chain. Challenges expire after two minutes and can be used only once. Read failures refuse the connection. Existing connections must be paired again after this update. Opening the wallet starts at the passkey unlock screen; restoring an address does not unlock it. New transaction requests open the Security tab and focus the approval card while the wallet is visible. Browsers cannot automatically foreground a closed or background mobile app: reopen Bio Wallet to receive pending requests. Recovery mode cannot connect or approve dApp requests.
+
 The Home screen's **Connect** button scans an expiring QR code from a supported app. The QR contains only a random session id and secret. It never contains a private key, passkey, or reusable signature. Connected apps may request contract-call transactions; Bio Wallet rebuilds each transaction with the smart account as payee, shows the requesting site and contract calls, and requires a fresh passkey approval before the sponsor co-signs and broadcasts it. Sessions expire after 30 minutes, requests after 10 minutes, and the user can reject a request or disconnect the app at any time.
 
 Set `DAPP_ORIGINS` to the exact deployed origins. Do not use `*`; origin allowlisting and the per-session secret are separate protections.

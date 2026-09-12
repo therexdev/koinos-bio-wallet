@@ -4,6 +4,7 @@
   "description": "Veive-style smart accounts sealed by your own biometrics \u2014 one passkey scan deploys a real on-chain account whose only authority is that passkey, verified by the chain itself. Feeless via its own mana sharer.",
   "main": "server.js",
   "scripts": {
+    "pretest": "node tests/dapp-auth.test.js && node tests/dapp-relay.test.js && node tests/dapp-notification.test.js",
     "start": "node server.js",
     "test": "node tests/wire-format.test.js && node tests/recovery-assertion.test.js && node tests/eth-parity.test.js && node tests/preflight.test.js && node tests/redeem-fallback.test.js && node tests/stale-read.test.js && node tests/demo-isolation.test.js && node tests/send-helpers.test.js && node tests/prices.test.js && node tests/portfolio-model.test.js && node tests/dom-ids.test.js && node tests/assetlinks.test.js && node tests/fees.test.js && node tests/solana-lite.test.js && node tests/wormhole-lite.test.js && node tests/sol-rail.test.js && node tests/sol-quote-live.test.js && node tests/rail-health.test.js && node tests/stalled-job.test.js && node tests/gas-accounting.test.js && node tests/gas-recovery.test.js && node tests/funding-v2.test.js && node tests/android-surface.test.js && node tests/android-offline.test.js",
     "keygen": "node tools/keygen.js",

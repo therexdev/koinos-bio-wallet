@@ -19,6 +19,7 @@
   let DAPP = null;         // {sessionId, secret}; bearer secret stays on this device
   let DAPP_POLL = null;
   let DAPP_REQUEST = null;
+  let DAPP_BUSY = false, DAPP_POLLING = false;
 
   /* ---------------- installable ----------------
      The service worker makes the wallet open offline and installable. It
@@ -95,7 +96,8 @@
     if (view === '#view-wallet') {
       paint(); if (WalletClient.canBuy) Fund.refresh();
       if (PENDING_INTENT) { UI.applyIntent(PENDING_INTENT); PENDING_INTENT = null; }
-      if (PENDING_CONNECT) { const next = PENDING_CONNECT; PENDING_CONNECT = null; void connectDapp(next); }
+      if (PENDING_CONNECT && ACTIVE) { const next = PENDING_CONNECT; PENDING_CONNECT = null; void connectDapp(next).catch(e => dappSay(e.message, 'err')); }
+      if (DAPP && DAPP.address === ADDRESS) startDappPoll();
     } else if (WalletClient.canBuy) Fund.stop();
     if (view === '#view-landing') refreshLandingSupport(); // support can change (recovery adds a passkey)
   };
@@ -174,18 +176,23 @@
     } catch (e) { throw new Error(e.message || 'That is not a Bio Wallet connection QR'); }
   }
   async function connectDapp(pair) {
+    UI.showTab('tab-security');
     if (!ADDRESS || !ACTIVE) { PENDING_CONNECT = pair; dappSay('Unlock the wallet first, then the connection will continue.'); return; }
+    if (RECOVERY) throw new Error('Sign in with a passkey to connect an app. Recovery mode cannot approve app access.');
     const query = new URLSearchParams(pair);
     const info = await api('/api/dapp/status?' + query);
     if (!confirm(`${info.name} wants to connect to this wallet.\n\nSite: ${info.origin}\nAccount: ${ADDRESS}\n\nConnecting lets it request transactions. Every transaction still needs your passkey approval.`)) return;
-    await api('/api/dapp/connect', { ...pair, address: ADDRESS, credentialId: RECOVERY ? RECOVERY.credentialId : Passkey.storedId() });
-    saveDapp(pair); dappSay(`Connected to ${info.name}`, 'ok'); $('#btn-dapp-disconnect').hidden = false; startDappPoll();
+    const proof = await api('/api/dapp/challenge', { ...pair, address: ADDRESS });
+    const assertion = await Passkey.assert(new TextEncoder().encode(proof.challenge), CREDENTIALS.filter(c => c.kind === 'passkey').map(c => c.id));
+    await api('/api/dapp/connect', { ...pair, address: ADDRESS, credentialId: assertion.credentialId, challenge: proof.challenge, signature: WebauthnWire.packSignatureBlob(assertion) });
+    saveDapp({ ...pair, address: ADDRESS }); dappSay(`Connected to ${info.name}`, 'ok'); $('#btn-dapp-disconnect').hidden = false; startDappPoll();
   }
   async function scanDapp() {
     try { const hit = await QR.scan(); if (hit) await connectDapp(parseConnect(hit.raw || hit.address)); }
     catch (e) { dappSay(e.message || 'Could not connect', 'err'); }
   }
   function paintDappRequest(app, request) {
+    const isNew = request && request.id !== DAPP_REQUEST?.id;
     DAPP_REQUEST = request;
     $('#dapp-request').hidden = !request;
     if (!request) return;
@@ -199,32 +206,47 @@
       return `${id.slice(0, 7)}…${id.slice(-5)} · entry ${call.entry_point}`;
     }).join(' | ');
     $('#dapp-network').textContent = request.summary.network || NET;
+    if (isNew) {
+      UI.showTab('tab-security');
+      $('#dapp-request').scrollIntoView({ block: 'center' });
+      $('#btn-dapp-approve').focus({ preventScroll: true });
+      dappSay('A transaction needs your approval. Review it below.');
+    }
   }
   async function pollDapp() {
-    if (!DAPP || document.hidden) return;
+    if (!DAPP || !ADDRESS || DAPP.address !== ADDRESS || document.hidden || DAPP_BUSY || DAPP_POLLING) return;
+    const pair = DAPP;
+    DAPP_POLLING = true;
     try {
       const data = await api('/api/dapp/pending?' + new URLSearchParams(DAPP));
+      if (DAPP !== pair || DAPP_BUSY || !ADDRESS) return;
       $('#btn-dapp-disconnect').hidden = false;
       paintDappRequest(data.app, data.requests[0] || null);
       if (!data.requests.length) dappSay(`Connected to ${data.app.name}`, 'ok');
     } catch (e) {
+      dappSay(e.status === 404 ? 'Connection expired. Scan a new QR to reconnect.' : 'Cannot receive app requests: ' + e.message, 'err');
       if (e.status === 404) { saveDapp(null); stopDappPoll(); $('#btn-dapp-disconnect').hidden = true; paintDappRequest(null, null); }
-    }
+    } finally { DAPP_POLLING = false; }
   }
   function startDappPoll() { stopDappPoll(); void pollDapp(); DAPP_POLL = setInterval(pollDapp, 2000); }
   function stopDappPoll() { if (DAPP_POLL) { clearInterval(DAPP_POLL); DAPP_POLL = null; } }
   $('#btn-connect-app').addEventListener('click', scanDapp);
   $('#btn-connect-app-security').addEventListener('click', scanDapp);
   $('#btn-dapp-approve').addEventListener('click', async () => {
-    if (!DAPP || !DAPP_REQUEST) return;
+    if (!DAPP || !DAPP_REQUEST || DAPP_BUSY) return;
+    if (RECOVERY) { dappSay('Sign in with a passkey to approve app transactions.', 'err'); return; }
+    const pair = DAPP, request = DAPP_REQUEST;
+    DAPP_BUSY = true;
     const btn = $('#btn-dapp-approve'); btn.disabled = true;
+    $('#btn-dapp-reject').disabled = true;
     try {
       dappSay('Confirm with your passkey…');
-      const blob = await signPrepared(DAPP_REQUEST.transaction);
-      const result = await api('/api/dapp/approve', { ...DAPP, requestId: DAPP_REQUEST.id, transaction: { ...DAPP_REQUEST.transaction, signatures: [blob] } });
+      const blob = await signPrepared(request.transaction);
+      if (DAPP !== pair || pair.address !== ADDRESS) throw new Error('Wallet account changed; reconnect');
+      const result = await api('/api/dapp/approve', { ...pair, requestId: request.id, transaction: { ...request.transaction, signatures: [blob] } });
       paintDappRequest(null, null); dappSay(`Approved · ${result.txid.slice(0, 14)}…`, 'ok'); void paint();
     } catch (e) { dappSay(friendly(e), 'err'); }
-    finally { btn.disabled = false; }
+    finally { btn.disabled = false; $('#btn-dapp-reject').disabled = false; DAPP_BUSY = false; }
   });
   $('#btn-dapp-reject').addEventListener('click', async () => {
     if (!DAPP || !DAPP_REQUEST) return;
@@ -616,6 +638,8 @@
     if (!confirm('Sign out?\n\nYour passkey (or recovery kit) re-opens this account — nothing is lost.')) return;
     stopPoll();
     stopDappPoll();
+    if (DAPP) void api('/api/dapp/disconnect', DAPP).catch(() => {});
+    saveDapp(null); paintDappRequest(null, null);
     PAINT_GEN++; PAINTING = false; PAINT_AGAIN = false;   // in-flight reads for this account are void
     BALANCE_SATS = '';
     ADDRESS = null; ACTIVE = false; RECOVERY = null; CREDENTIALS = []; PENDING_KIT = null; PENDING_BACKUP = null;
@@ -639,13 +663,8 @@
 
   /* ---------------- resume ---------------- */
   DAPP = loadDapp();
-  if (storedAddr() && Passkey.remembered()) {
-    ADDRESS = storedAddr();
-    setStep('pending');
-    pollStatus();
-    show('#view-wallet');
-    if (DAPP) { $('#btn-dapp-disconnect').hidden = false; startDappPoll(); }
-  } else {
-    show('#view-landing');
-  }
+  if (DAPP && !DAPP.address) saveDapp(null); // legacy connections need fresh verified approval
+  // Remembering an address is not an unlock. Reopening requires a new ceremony.
+  show('#view-landing');
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) void pollDapp(); });
 })();
