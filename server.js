@@ -30,6 +30,7 @@ const veive = require('./tools/veive');
 const funding = require('./tools/funding');
 const appSurface = require('./tools/app-surface');
 const dappRelay = require('./tools/dapp-relay');
+const dappAuth = require('./tools/dapp-auth');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
 const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
@@ -191,12 +192,25 @@ api.dappStatus = async (query) => {
   return { ok: true, ...dappRelay.publicSession(session) };
 };
 
+api.dappChallenge = async (body, _ip, _surface, req) => {
+  const session = dappSession(body);
+  if (DEMO) throw httpError(503, 'App connections require the live wallet');
+  if (session.address) throw httpError(409, 'This connection is already approved; create a new QR');
+  const origin = CFG.publicUrl || `${String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()}://${req.headers.host}`;
+  if (req.headers.origin !== origin) throw httpError(403, 'Approve from the wallet site');
+  return { ok: true, challenge: dappAuth.issue(session.id, String(body.address || ''), origin, CFG.passkeyRpId || new URL(origin).hostname) };
+};
+
 api.dappConnect = async (body) => {
   const session = dappSession(body);
   const address = String(body.address || '');
   const credentialId = String(body.credentialId || '');
   const rec = veive.status(credentialId);
   if (!rec || rec.address !== address || rec.step !== 'active') throw httpError(403, 'unlock this wallet before connecting');
+  if (session.address) throw httpError(409, 'Connection already approved');
+  try { await dappAuth.verify(session.id, address, body.challenge, body.signature, chain); }
+  catch (e) { throw httpError(403, e.message); }
+  if (session.address) throw httpError(409, 'Connection already approved');
   return { ok: true, ...dappRelay.connect(session, address) };
 };
 
@@ -232,6 +246,8 @@ api.dappApprove = async (body) => {
   const session = dappSession(body);
   const request = dappRelay.request(session, body.requestId);
   if (!request || request.status !== 'pending') throw httpError(404, 'signing request not found or already handled');
+  if (JSON.stringify(body.transaction?.header) !== JSON.stringify(request.transaction.header) || JSON.stringify(body.transaction?.operations) !== JSON.stringify(request.transaction.operations)) throw httpError(400, 'Transaction changed after preparation');
+  dappRelay.settle(request, 'submitting');
   try {
     let txid;
     if (DEMO) {
@@ -954,6 +970,7 @@ const POST_ROUTES = {
   '/api/fund/prepare-step': api.fundPrepareStep,
   '/api/fund/resume': api.fundResume, '/api/fund/reset': api.fundReset,
   '/api/dapp/create': api.dappCreate, '/api/dapp/connect': api.dappConnect,
+  '/api/dapp/challenge': api.dappChallenge,
   '/api/dapp/request': api.dappRequest, '/api/dapp/approve': api.dappApprove,
   '/api/dapp/reject': api.dappReject, '/api/dapp/disconnect': api.dappDisconnect,
 };
