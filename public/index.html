@@ -65,8 +65,7 @@
       contract whose only key is your passkey (face, fingerprint, or device PIN). The chain
       itself verifies every action against your biometrics, Veive-protocol style. No password,
       no seed phrase, no fees — and no key that anyone, including us, could steal.</p>
-    <button class="cta" id="btn-go" disabled>Sign in with passkey</button>
-    <button class="ghost wide" id="btn-create-account" type="button" disabled>Create a new wallet</button>
+    <button class="cta" id="btn-go" disabled>Create Account or Sign In</button>
     <p class="note" id="connection-status" role="status">Connecting to wallet…</p>
     <p class="alt" id="alt-unlock" hidden>Have another saved passkey?
       <a href="#" id="btn-unlock-existing">Choose a saved passkey</a></p>
@@ -310,10 +309,14 @@
           </div>
         </div>
         <div id="kit-box" hidden>
-          <p class="hint"><strong>Save this file somewhere safe and offline</strong> —
-            it just downloaded, and it's shown below in case you'd rather copy it by hand. Anyone holding it
-            controls the account. It does nothing until you activate it.</p>
-          <pre class="kit-text" id="kit-text"></pre>
+          <p class="hint"><strong>Save your recovery kit as a .txt file.</strong>
+            If the download didn't start, use the button below. Keep the file safe and offline —
+            anyone holding it controls the account. It only works after you activate it.</p>
+          <a class="cta small" id="btn-kit-download" download>Download recovery kit (.txt)</a>
+          <details id="kit-preview">
+            <summary class="hint">View kit text</summary>
+            <pre class="kit-text" id="kit-text"></pre>
+          </details>
           <div class="btn-row">
             <button class="cta small lock" id="btn-kit-activate" type="button"><svg class="ic ic-18"><use href="#i-lock"/></svg> I saved it — activate on-chain</button>
             <button class="ghost" id="btn-kit-cancel" type="button">Discard</button>

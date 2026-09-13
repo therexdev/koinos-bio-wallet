@@ -104,15 +104,27 @@
     return out;
   }
 
-  function downloadKit(kit) {
-    const blob = new Blob([kitText(kit)], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'koinos-recovery-kit-' + String(kit.address || 'account').slice(0, 8) + '.txt';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  function prepareDownload(kit, link) {
+    const blob = new Blob([kitText(kit)], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = 'koinos-recovery-kit-' + String(kit.address || 'account').slice(0, 8) + '.txt';
+    return () => {
+      URL.revokeObjectURL(url);
+      if (link.href === url) {
+        link.removeAttribute('href');
+        link.removeAttribute('download');
+      }
+    };
   }
 
-  return { generate, signTx, kitText, parseKit, downloadKit, setContext };
+  function downloadKit(kit) {
+    const a = document.createElement('a');
+    const release = prepareDownload(kit, a);
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { release(); a.remove(); }, 60000);
+  }
+
+  return { generate, signTx, kitText, parseKit, prepareDownload, downloadKit, setContext };
 });

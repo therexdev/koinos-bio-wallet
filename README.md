@@ -712,7 +712,11 @@ and never run two funding workers from copies of one live funding ledger.
 Forwarding preserves the browser Origin and Android restrictions, checks passkey
 proofs at the backend, and never automatically retries transaction POSTs.
 
-The sign-in button always signs in. New-wallet creation is a separate confirmed
-action. A configuration outage displays a retrying connection message instead of
-claiming the wallet is in demo mode. Public Koinos and ETH health probes no longer
+The **Create Account or Sign In** button opens the remembered passkey or creates
+a wallet when none is remembered. **Choose a saved passkey** opens the picker
+for an existing wallet on another device. Failed sign-in never switches to
+account creation. Recovery kits download as `.txt` files, with a persistent
+download link for the same kit until activation or discard. A configuration
+outage displays a retrying connection message instead of claiming the wallet
+is in demo mode. Public Koinos and ETH health probes no longer
 block local initialization or sign-in configuration.

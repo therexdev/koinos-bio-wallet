@@ -30,6 +30,7 @@
     });
   }
   let PENDING_KIT = null;    // a generated-but-unregistered recovery kit
+  let RELEASE_KIT_DOWNLOAD = null;
   let POLL = null;
 
   const storeAddr = (a) => { try { a ? localStorage.setItem(LS_ADDR, a) : localStorage.removeItem(LS_ADDR); } catch (_) {} };
@@ -64,7 +65,6 @@
   }
   // A failed request is an unavailable connection, never a demo wallet.
   $('#btn-go').disabled = true;
-  $('#btn-create-account').disabled = true;
   const cfg = await waitForConfig();
   if (cfg.rpId) Passkey.setRpId(cfg.rpId);
   /* The network is stamped on <body> for CSS and for anything that wants
@@ -279,12 +279,10 @@
 
   /* ---------------- landing: THE button ---------------- */
   const go = $('#btn-go');
-  const create = $('#btn-create-account');
   let ENTERING = false;
   async function refreshLandingSupport() {
     const ok = await Passkey.platformReady();
     go.disabled = !ok || ENTERING;
-    create.disabled = !ok || ENTERING;
     $('#no-passkey').hidden = ok;
     $('#alt-unlock').hidden = !ok;
   }
@@ -327,7 +325,6 @@
     if (ENTERING) return;
     ENTERING = true;
     go.disabled = true;
-    create.disabled = true;
     try {
       if (makeNew) await createAccount();
       else await signIn(pickAnother);
@@ -341,11 +338,7 @@
     }
   }
 
-  go.addEventListener('click', () => enter(false));
-  create.addEventListener('click', () => {
-    if (ENTERING || !confirm('Create a new wallet?\n\nThis creates a separate account with a new address. To open an existing wallet, cancel and choose Sign in with passkey.')) return;
-    return enter(true);
-  });
+  go.addEventListener('click', () => enter(!Passkey.remembered()));
   $('#btn-unlock-existing').addEventListener('click', (e) => { e.preventDefault(); return enter(false, true); });
   $('#btn-open-recover').addEventListener('click', (e) => { e.preventDefault(); show('#view-recover'); });
   $('#btn-recover-back').addEventListener('click', (e) => { e.preventDefault(); show('#view-landing'); });
@@ -526,37 +519,64 @@
 
   /* The kit: generate → the user SAVES it → only then register on-chain.
      Never the other way around — a registered key nobody saved is a lie. */
+  function clearPendingKit() {
+    if (RELEASE_KIT_DOWNLOAD) RELEASE_KIT_DOWNLOAD();
+    RELEASE_KIT_DOWNLOAD = null;
+    PENDING_KIT = null;
+    $('#kit-box').hidden = true;
+    $('#kit-text').textContent = '';
+    $('#kit-preview').open = false;
+  }
   $('#btn-make-kit').addEventListener('click', async () => {
-    try {
-      const k = await Recovery.generate();
-      PENDING_KIT = { ...k, address: ADDRESS };
-      Recovery.downloadKit(PENDING_KIT);
-      $('#kit-text').textContent = Recovery.kitText(PENDING_KIT);
-      $('#kit-box').hidden = false;
-      $('#btn-make-kit').hidden = true;
-      bsay('');
-    } catch (e) { bsay(e.message || 'Could not generate a key', 'err'); }
-  });
-  $('#btn-kit-activate').addEventListener('click', async () => {
-    if (!PENDING_KIT) return;
-    const btn = $('#btn-kit-activate');
+    const btn = $('#btn-make-kit'), account = ADDRESS, generation = PAINT_GEN;
+    if (btn.disabled || PENDING_KIT || !account) return;
     btn.disabled = true;
     try {
+      const k = await Recovery.generate();
+      if (ADDRESS !== account || PAINT_GEN !== generation) return;
+      PENDING_KIT = { ...k, address: account };
+      const download = $('#btn-kit-download');
+      RELEASE_KIT_DOWNLOAD = Recovery.prepareDownload(PENDING_KIT, download);
+      $('#kit-text').textContent = Recovery.kitText(PENDING_KIT);
+      $('#kit-box').hidden = false;
+      $('#btn-kit-activate').disabled = false;
+      btn.hidden = true;
+      bsay('');
+      // Some browsers block automatic downloads after asynchronous key creation.
+      // Keep the same file on a real download link for a direct user click.
+      download.click();
+    } catch (e) {
+      if (ADDRESS === account && PAINT_GEN === generation) {
+        if (!RELEASE_KIT_DOWNLOAD) clearPendingKit();
+        bsay(e.message || 'Could not prepare your recovery kit', 'err');
+      }
+    } finally { btn.disabled = false; }
+  });
+  $('#btn-kit-activate').addEventListener('click', async () => {
+    if (!PENDING_KIT || $('#btn-kit-activate').disabled) return;
+    const kit = PENDING_KIT;
+    const btn = $('#btn-kit-activate');
+    btn.disabled = true;
+    $('#btn-kit-cancel').disabled = true;
+    try {
       await registerCredential(
-        { credentialId: PENDING_KIT.credentialId, publicKey: PENDING_KIT.publicKey, kind: 'recovery', label: 'recovery kit' },
+        { credentialId: kit.credentialId, publicKey: kit.publicKey, kind: 'recovery', label: 'recovery kit' },
         'Activating your kit');
-      $('#kit-box').hidden = true;
-      $('#kit-text').textContent = '';
-      PENDING_KIT = null;
+      if (PENDING_KIT !== kit) return;
+      clearPendingKit();
       bsay('Recovery kit active ✓ — the saved file now opens this account all by itself. Keep it offline.', 'ok');
     } catch (e) {
+      if (PENDING_KIT !== kit) return;
       bsay((e.message || 'Activation failed') + ' — your downloaded kit is not active yet; try again.', 'err');
+    } finally {
       btn.disabled = false;
+      $('#btn-kit-cancel').disabled = false;
+      renderCredentials();
     }
   });
   $('#btn-kit-cancel').addEventListener('click', () => {
-    PENDING_KIT = null;
-    $('#kit-box').hidden = true; $('#kit-text').textContent = '';
+    if ($('#btn-kit-cancel').disabled) return;
+    clearPendingKit();
     $('#btn-make-kit').hidden = CREDENTIALS.length >= 6;
     bsay('Kit discarded — nothing was registered. Delete the downloaded file.', '');
   });
@@ -667,7 +687,8 @@
     saveDapp(null); paintDappRequest(null, null);
     PAINT_GEN++; PAINTING = false; PAINT_AGAIN = false;   // in-flight reads for this account are void
     BALANCE_SATS = '';
-    ADDRESS = null; ACTIVE = false; RECOVERY = null; CREDENTIALS = []; PENDING_KIT = null; PENDING_BACKUP = null;
+    clearPendingKit();
+    ADDRESS = null; ACTIVE = false; RECOVERY = null; CREDENTIALS = []; PENDING_BACKUP = null;
     /* The credential id stays remembered: it's public on-chain anyway, the
        biometric still gates every ceremony. Sign-in never creates accounts. */
     storeAddr(null);
