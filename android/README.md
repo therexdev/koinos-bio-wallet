@@ -1,4 +1,4 @@
-# Bio Wallet for Android
+# KOIN Vault for Android
 
 The APK opens `https://wallet.usekoinos.com/android/` as a Trusted Web Activity.
 It has Home, Send, Receive and Security. Buying and conversions are absent.

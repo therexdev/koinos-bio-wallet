@@ -677,7 +677,7 @@ const UI = (() => {
 
   function fillInstallSheet(offer) {
     const env = installEnv();
-    byId('install-title').textContent = env.mobile ? 'Add Bio Wallet to your Home Screen' : 'Install Bio Wallet as an app';
+    byId('install-title').textContent = env.mobile ? 'Add KOIN Vault to your Home Screen' : 'Install KOIN Vault as an app';
     byId('install-sub').textContent = env.mobile
       ? 'Opens full-screen like an app, works offline, and your fingerprint signs you in with one tap.'
       : 'Opens in its own window, works offline, and your passkey signs you in with one tap.';
@@ -713,7 +713,7 @@ const UI = (() => {
     if (choice && choice.outcome === 'accepted') {
       lsSet(LS_INSTALLED, '1');
       if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
-      toast('Added — open Bio Wallet from your home screen');
+      toast('Added — open KOIN Vault from your home screen');
     } else {
       snoozeInstall();
       if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
@@ -882,7 +882,7 @@ const UI = (() => {
       if (WalletClient.android) return;
       installPrompt = null; lsSet(LS_INSTALLED, '1');
       if (sheetEl && sheetEl.id === 'sheet-install') closeSheet();
-      toast('Added — open Bio Wallet from your home screen');
+      toast('Added — open KOIN Vault from your home screen');
       paintInstall();
     });
     on('btn-install', runInstallPrompt);

@@ -197,7 +197,7 @@ jobs:
           echo "ANDROID_SHA256_FINGERPRINTS=$FP"
           KIND=$([ "$HAS_RELEASE_KEY" = "true" ] && echo "release key" || echo "DEBUG key — add the signing secrets for a real build")
           {
-            echo "## Bio Wallet Android build ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE})"
+            echo "## KOIN Vault Android build ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE})"
             echo
             echo "Signed with the **${KIND}**."
             echo
@@ -233,20 +233,20 @@ jobs:
           git push -f origin android-latest
           KIND=$([ "$HAS_RELEASE_KEY" = "true" ] && echo "the release key" || echo "a debug key (set the signing secrets for a real one)")
           printf '%s\n' \
-            "Latest build of the Bio Wallet Android app from main: version ${ANDROID_VERSION_NAME}, signed with ${KIND}." \
+            "Latest build of the KOIN Vault Android app from main: version ${ANDROID_VERSION_NAME}, signed with ${KIND}." \
             "" \
             "**Install:** download bio-wallet.apk on the phone, open it, and allow installs from your browser or file manager when asked." \
             "" \
             "**\"App not installed\"?** Usually one of these:" \
-            "- a build signed with a different key is already on the phone: uninstall Bio Wallet, then install again;" \
+            "- a build signed with a different key is already on the phone: uninstall KOIN Vault, then install again;" \
             "- you opened the .aab file: that one is for the Play Store, phones install the .apk;" \
             "- the download was cut short: download it again;" \
             "- the phone blocked the install: Settings, Apps, Special app access, Install unknown apps." \
             > "$RUNNER_TEMP/notes.md"
           if gh release view android-latest >/dev/null 2>&1; then
-            gh release edit android-latest --prerelease --title "Bio Wallet for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release edit android-latest --prerelease --title "KOIN Vault for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create android-latest --prerelease --title "Bio Wallet for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create android-latest --prerelease --title "KOIN Vault for Android — latest build (${ANDROID_VERSION_NAME})" --notes-file "$RUNNER_TEMP/notes.md"
           fi
           gh release upload android-latest out/bio-wallet.apk "out/bio-wallet-${ANDROID_VERSION_NAME}.apk" "out/bio-wallet-${ANDROID_VERSION_NAME}.aab" --clobber
           echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/android-latest/bio-wallet.apk" >> "$GITHUB_STEP_SUMMARY"

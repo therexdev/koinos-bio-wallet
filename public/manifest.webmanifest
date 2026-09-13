@@ -1,6 +1,6 @@
 {
-  "name": "Koinos Bio Wallet",
-  "short_name": "Bio Wallet",
+  "name": "KOIN Vault",
+  "short_name": "KOIN Vault",
   "description": "A Koinos smart account sealed by your fingerprint. No password, no seed phrase, no fees.",
   "id": "/",
   "start_url": "/?source=pwa",

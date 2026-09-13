@@ -1,5 +1,5 @@
 /* ============================================================
-   Koinos Bio Wallet — the Veive smart-account wallet.
+   KOIN Vault — the Veive smart-account wallet.
 
    One button, one biometric scan, one REAL smart account on-chain:
    the server uploads Veive's Account contract for the visitor, installs
@@ -317,7 +317,7 @@ api.config = async (_params, surface = {}) => {
   const net = NETWORKS[CFG.network];
   return {
     ok: true,
-    app: 'Koinos Bio Wallet',
+    app: 'KOIN Vault',
     version: BUILD.version,
     commit: BUILD.commit || undefined,
     /* Whether the optional Solana packages are installed on this host. The
@@ -1061,7 +1061,7 @@ function applyMode() {
 }
 
 (async () => {
-  console.log('Koinos Bio Wallet — Veive smart accounts');
+  console.log('KOIN Vault — Veive smart accounts');
   console.log(`network:  ${CFG.network}`);
   const modulesSet = !!(CFG.modules.modSign && CFG.modules.modValidation && CFG.modules.verifier);
   let retryable = false;

@@ -39,7 +39,7 @@ command -v keytool >/dev/null || { echo "keytool not found: install a JDK (17+)"
 pw=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
 
 keytool -genkeypair -v -keystore "$out" -alias "$alias" -keyalg RSA -keysize 4096 -validity 10000 \
-  -storepass "$pw" -keypass "$pw" -dname "CN=Koinos Bio Wallet, O=usekoinos.com, C=US" >/dev/null
+  -storepass "$pw" -keypass "$pw" -dname "CN=KOIN Vault, O=usekoinos.com, C=US" >/dev/null
 chmod 600 "$out"
 
 fp=$(keytool -list -v -keystore "$out" -storepass "$pw" -alias "$alias" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')

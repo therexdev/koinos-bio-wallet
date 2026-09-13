@@ -1,4 +1,4 @@
-// Koinos Bio Wallet for Android — a Trusted Web Activity around
+// KOIN Vault for Android — a Trusted Web Activity around
 // https://wallet.usekoinos.com. See android/README.md.
 plugins {
   // API 36 (Android 16) needs AGP 8.11+; 8.5.2 cannot compile against it at

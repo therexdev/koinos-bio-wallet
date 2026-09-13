@@ -1,4 +1,4 @@
-/* Koinos Bio Wallet — the Veive smart-account app. One button in:
+/* KOIN Vault — the Veive smart-account app. One button in:
    a new passkey mints a REAL smart account on-chain (server-bootstrapped,
    mana-sponsored); the same scan signs you back in anywhere the passkey
    syncs. Sends are authorized by WebAuthn assertions the CHAIN verifies.
@@ -171,9 +171,9 @@
       const url = new URL(String(raw || ''), location.origin);
       if (url.origin !== location.origin) throw new Error('This QR belongs to a different wallet site');
       const sessionId = url.searchParams.get('connect'), secret = url.searchParams.get('secret');
-      if (!sessionId || !secret) throw new Error('That is not a Bio Wallet connection QR');
+      if (!sessionId || !secret) throw new Error('That is not a KOIN Vault connection QR');
       return { sessionId, secret };
-    } catch (e) { throw new Error(e.message || 'That is not a Bio Wallet connection QR'); }
+    } catch (e) { throw new Error(e.message || 'That is not a KOIN Vault connection QR'); }
   }
   async function connectDapp(pair) {
     UI.showTab('tab-security');

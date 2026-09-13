@@ -81,7 +81,7 @@ if [ "$reuse" = false ]; then
   PW=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
   keytool -genkeypair -v -keystore "$KEY" -alias "$ALIAS" -keyalg RSA -keysize 4096 \
     -validity 10000 -storepass "$PW" -keypass "$PW" \
-    -dname "CN=Koinos Bio Wallet, O=usekoinos.com, C=US" >/dev/null
+    -dname "CN=KOIN Vault, O=usekoinos.com, C=US" >/dev/null
   chmod 600 "$KEY"
   printf '%s' "$PW" > "$PWFILE"; chmod 600 "$PWFILE"
   echo "Made a new signing key at $KEY."

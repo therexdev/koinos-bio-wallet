@@ -82,7 +82,7 @@
 
   function kitText({ address, credentialId, privateKey }) {
     return [
-      'KOINOS BIO WALLET — RECOVERY KIT',
+      'KOIN Vault — RECOVERY KIT',
       '================================',
       'Account:    ' + address,
       'Credential: ' + credentialId,

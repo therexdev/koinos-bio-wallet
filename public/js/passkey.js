@@ -43,7 +43,7 @@ const Passkey = (() => {
     const existing = storedId();
     const cred = await navigator.credentials.create({
       publicKey: {
-        rp: { name: 'Koinos Bio Wallet', id: RP_ID },
+        rp: { name: 'KOIN Vault', id: RP_ID },
         user: {
           id: crypto.getRandomValues(new Uint8Array(16)),
           name: 'Koinos Smart Account',
@@ -76,7 +76,7 @@ const Passkey = (() => {
   async function createBackupCredential(excludeIds) {
     const cred = await navigator.credentials.create({
       publicKey: {
-        rp: { name: 'Koinos Bio Wallet', id: RP_ID },
+        rp: { name: 'KOIN Vault', id: RP_ID },
         user: {
           id: crypto.getRandomValues(new Uint8Array(16)),
           name: 'Koinos Smart Account (backup)',
