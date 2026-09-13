@@ -95,6 +95,7 @@ const CFG = {
 };
 
 let DEMO = CFG.demo;
+let BOOTING = true;
 const prices = createPrices({
   chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
   coingecko: process.env.PRICES_COINGECKO !== '0',
@@ -986,6 +987,10 @@ const server = http.createServer(async (req, res) => {
     const surface = appSurface.requestSurface(pathname, req.headers);
     const apiPath = surface.apiPath;
     if (apiPath.startsWith('/api/')) {
+      if (BOOTING) {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '3' });
+        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.' }));
+      }
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
@@ -1032,6 +1037,12 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* ---------------- boot ---------------- */
+
+// Bind before any external RPC waits. Hosting must be able to reach the
+// process during startup; API handlers stay gated until stores are ready.
+server.listen(CFG.port, () => {
+  console.log(`serving:  http://localhost:${CFG.port} (initializing)`);
+});
 
 async function connectChain() {
   const rpcUrls = await pickRpcs(CFG.network);
@@ -1095,6 +1106,7 @@ function applyMode() {
   }
 
   applyMode();
+  BOOTING = false;
 
   /* A live-configured server must never stay stuck in demo because one RPC
      probe failed at boot: keep retrying and flip to live when the chain
@@ -1114,7 +1126,5 @@ function applyMode() {
   }
 
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
-  server.listen(CFG.port, () => {
-    console.log(`serving:  http://localhost:${CFG.port} ${DEMO ? '(demo mode)' : ''}`);
-  });
+  console.log(`ready:    ${DEMO ? 'demo mode' : 'live'}`);
 })();
