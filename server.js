@@ -228,9 +228,10 @@ api.dappRequest = async (body, ip, _surface, req) => {
   else {
     try { await veive.ensureReady(session.address); }
     catch (e) { throw httpError(409, e.message); }
-    const sponsorMana = await chain.mana(chain.sponsorAddress());
-    if (sponsorMana < CFG.minSponsorMana) throw httpError(503, 'the sponsor wallet is recharging its mana');
-    tx = await chain.prepareUserTx(session.address, operations, { rcLimit: chain.K.rcLimitSmart });
+    const sponsorRc = BigInt(await chain.provider().getAccountRc(chain.sponsorAddress()));
+    const requiredRc = BigInt(chain.K.rcLimitDapp);
+    if (sponsorRc < requiredRc) throw httpError(503, 'The sponsor needs 100 available mana to approve this trade. Its mana is recharging; your wallet balance is not used for this sponsored transaction.');
+    tx = await chain.prepareUserTx(session.address, operations, { rcLimit: chain.K.rcLimitDapp });
   }
   const request = dappRelay.addRequest(session, { operations, summary: body.summary, transaction: tx });
   return { ok: true, requestId: request.id, expiresAt: request.expires };
@@ -259,6 +260,9 @@ api.dappApprove = async (body) => {
     dappRelay.settle(request, 'approved', { txid });
     return { ok: true, txid, explorer: explorerTx(txid) };
   } catch (e) {
+    if (/insufficient rc/i.test(String(e.message || e))) {
+      e = httpError(409, 'This trade exceeded its signed mana limit. Your KOIN balance is not the cause. Start a new order to use the current trade limit; if it fails again, the contract calls need a larger budget.');
+    }
     dappRelay.settle(request, 'failed', { error: String(e.message || e).slice(0, 240) });
     throw e;
   }

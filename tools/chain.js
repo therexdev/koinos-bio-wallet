@@ -52,6 +52,10 @@ const K = {
      which costs more compute than a plain transfer. */
   rcLimitUpload: '12000000000',
   rcLimitSmart: '2000000000',
+  // Trades may run several contract calls and passkey authority checks.
+  // This is a ceiling, not a fixed charge; ordinary wallet actions keep
+  // their existing budget. The sponsor must cover it before approval.
+  rcLimitDapp: '10000000000',
   /* Our deployed module addresses (tools/infra-deploy.js). All three set
      ⇒ the wallet creates Veive-style smart accounts. */
   modules: { verifier: '', modSign: '', modValidation: '' },
