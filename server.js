@@ -43,7 +43,7 @@ async function priceEthProvider() {
   if (!_priceEthProvider) _priceEthProvider = await makeEthProvider().catch((e) => { _priceEthProvider = null; throw e; });
   return _priceEthProvider;
 }
-const { pickRpcs, NETWORKS } = require('./tools/rpc');
+const { rpcCandidates, NETWORKS } = require('./tools/rpc');
 
 /* Digital Asset Links for the Android app (android/): the site vouches for
    the app's package + signing certificate, Chrome then opens the Trusted
@@ -1076,15 +1076,14 @@ server.listen(CFG.port, () => {
   console.log(`serving:  http://localhost:${CFG.port} (initializing)`);
 });
 
-async function connectChain() {
-  if (BOOTING) bootStage('probing-rpc');
-  const rpcUrls = await pickRpcs(CFG.network);
+function connectChain() {
+  // Loading existing wallet state must not depend on a public RPC response.
+  // The provider already applies bounded failover on each live read.
+  bootStage('configuring-chain');
+  const rpcUrls = rpcCandidates(CFG.network);
+  if (!rpcUrls.length) throw new Error('No Koinos RPC configured');
   chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
-  if (BOOTING) bootStage('reading-sponsor-balances');
-  const [sponsorMana, sponsorKoin] = await Promise.all([
-    chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
-  ]);
-  console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
+  console.log(`sponsor:  ${chain.sponsorAddress()}`); // validates the configured key locally
   console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
   console.log(`          verifier=${CFG.modules.verifier}`);
 }
@@ -1120,7 +1119,7 @@ function applyMode() {
     console.log('mode:     DEMO — set VERIFIER_ADDR / MOD_SIGN_WEBAUTHN_ADDR / MOD_VALIDATION_SIGNATURE_ADDR (run tools/infra-deploy.js)');
   } else if (!DEMO) {
     try {
-      await connectChain();
+      connectChain();
     } catch (e) {
       DEMO = true;
       retryable = true; // config is complete — only this step failed
@@ -1150,7 +1149,7 @@ function applyMode() {
   if (retryable) {
     const timer = setInterval(async () => {
       try {
-        await connectChain();
+        connectChain();
         DEMO = false;
         BOOT_NOTE = '';
         applyMode();
