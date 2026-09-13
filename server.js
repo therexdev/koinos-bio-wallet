@@ -43,7 +43,7 @@ async function priceEthProvider() {
   if (!_priceEthProvider) _priceEthProvider = await makeEthProvider().catch((e) => { _priceEthProvider = null; throw e; });
   return _priceEthProvider;
 }
-const { rpcCandidates, NETWORKS } = require('./tools/rpc');
+const { pickRpcs, NETWORKS } = require('./tools/rpc');
 
 /* Digital Asset Links for the Android app (android/): the site vouches for
    the app's package + signing certificate, Chrome then opens the Trusted
@@ -97,17 +97,6 @@ const CFG = {
 
 let DEMO = CFG.demo;
 let BOOTING = true;
-const BOOT_ID = require('node:crypto').randomUUID();
-const BOOT_STARTED = Date.now();
-let BOOT_STAGE = 'initializing';
-let BOOT_FAILURE = null;
-function bootStage(stage) {
-  BOOT_STAGE = stage;
-  console.log(`startup: ${BOOT_ID} ${stage}`);
-}
-function bootStatus() {
-  return { instance: BOOT_ID, uptimeSeconds: Math.floor((Date.now() - BOOT_STARTED) / 1000), stage: BOOT_STAGE, ...(BOOT_FAILURE ? { failure: BOOT_FAILURE } : {}) };
-}
 const prices = createPrices({
   chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
   coingecko: process.env.PRICES_COINGECKO !== '0',
@@ -1021,7 +1010,7 @@ const server = http.createServer(async (req, res) => {
     if (apiPath.startsWith('/api/')) {
       if (BOOTING) {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '3' });
-        return res.end(JSON.stringify({ error: BOOT_FAILURE ? 'Wallet startup is blocked. Check /api/health for details.' : 'Wallet is starting. Please reload in a few seconds.', ...(apiPath === '/api/health' ? { startup: bootStatus() } : {}) }));
+        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.' }));
       }
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
@@ -1039,7 +1028,6 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && GET_ROUTES[apiPath]) {
         if (surface.android && apiPath === '/api/health') url.searchParams.delete('rail');
         out = await GET_ROUTES[apiPath](url.searchParams, surface);
-        if (apiPath === '/api/health') out = { ...out, startup: bootStatus() };
         if (apiPath === '/api/config') {
           out = { ...out, client: surface.android ? 'android' : 'web', features: { buy: !surface.android } };
           if (surface.android) { delete out.float; delete out.solRail; }
@@ -1077,28 +1065,25 @@ server.listen(CFG.port, () => {
   console.log(`serving:  http://localhost:${CFG.port} (initializing)`);
 });
 
-function connectChain() {
-  // Loading existing wallet state must not depend on a public RPC response.
-  // The provider already applies bounded failover on each live read.
-  bootStage('configuring-chain');
-  const rpcUrls = rpcCandidates(CFG.network);
-  if (!rpcUrls.length) throw new Error('No Koinos RPC configured');
+async function connectChain() {
+  const rpcUrls = await pickRpcs(CFG.network);
   chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
-  console.log(`sponsor:  ${chain.sponsorAddress()}`); // validates the configured key locally
+  const [sponsorMana, sponsorKoin] = await Promise.all([
+    chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
+  ]);
+  console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
   console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
   console.log(`          verifier=${CFG.modules.verifier}`);
 }
 
 function applyMode() {
+  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
+  if (!DEMO) veive.reconcile();
   /* The funding rails run live only on mainnet (the Vortex bridge, the
      Uniswap pools, Jupiter and Wormhole are mainnet); everywhere else they
      simulate. */
   const fundingDemo = DEMO || CFG.network !== 'mainnet';
-  bootStage('opening-funding-ledger');
   funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
-  bootStage('opening-account-store');
-  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
-  if (!DEMO) veive.reconcile();
   console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
   /* The Solana rail probes its (ESM) SDK asynchronously; report it once known. */
   funding._sdkReady().then(() => {
@@ -1122,7 +1107,7 @@ function applyMode() {
     console.log('mode:     DEMO — set VERIFIER_ADDR / MOD_SIGN_WEBAUTHN_ADDR / MOD_VALIDATION_SIGNATURE_ADDR (run tools/infra-deploy.js)');
   } else if (!DEMO) {
     try {
-      connectChain();
+      await connectChain();
     } catch (e) {
       DEMO = true;
       retryable = true; // config is complete — only this step failed
@@ -1141,10 +1126,8 @@ function applyMode() {
     console.log('WARNING:  ' + w);
   }
 
-  bootStage('loading-wallet-data');
   applyMode();
   BOOTING = false;
-  bootStage('ready');
 
   /* A live-configured server must never stay stuck in demo because one RPC
      probe failed at boot: keep retrying and flip to live when the chain
@@ -1152,7 +1135,7 @@ function applyMode() {
   if (retryable) {
     const timer = setInterval(async () => {
       try {
-        connectChain();
+        await connectChain();
         DEMO = false;
         BOOT_NOTE = '';
         applyMode();
@@ -1165,15 +1148,4 @@ function applyMode() {
 
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   console.log(`ready:    ${DEMO ? 'demo mode' : 'live'}`);
-})().catch(error => {
-  // Preserve the HTTP listener and fail closed; operators can read the actual
-  // startup category instead of an endless crash/restart with a generic 503.
-  BOOTING = true;
-  const message = String(error?.message || error);
-  BOOT_FAILURE = /Another funding worker/.test(message) ? 'wallet_process_conflict'
-    : /worker lock/.test(message) ? 'funding_lock_inspection_required'
-    : /funding ledger/.test(message) ? 'funding_ledger_unreadable'
-    : ['EACCES', 'EPERM', 'EROFS'].includes(error?.code) ? 'data_directory_permission_denied'
-    : 'startup_failed';
-  console.error(`startup failed [${BOOT_FAILURE}]:`, error);
-});
+})();

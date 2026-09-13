@@ -48,32 +48,7 @@
 
   /* ---------------- boot ---------------- */
   let cfg = null;
-  // A failed request is not a demo configuration. Wait for the server before
-  // enabling account creation or signing; preserve saved wallet credentials.
-  async function loadConfig() {
-    const button = $('#btn-go');
-    const note = $('#demo-note');
-    button.disabled = true;
-    note.hidden = false;
-    note.textContent = 'Connecting to your wallet…';
-    for (;;) {
-      try {
-        const response = await fetch(WalletClient.apiPath('/api/config'), {
-          headers: WalletClient.android ? { 'X-Wallet-Client': 'android' } : {},
-          signal: AbortSignal.timeout(15000),
-          cache: 'no-store',
-        });
-        const config = await response.json();
-        if (!response.ok || config.ok !== true || typeof config.demo !== 'boolean') throw new Error('Wallet not ready');
-        note.hidden = true;
-        return config;
-      } catch (_) {
-        note.textContent = 'The wallet server is temporarily unavailable. Reconnecting automatically…';
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-    }
-  }
-  cfg = await loadConfig();
+  try { cfg = await api('/api/config'); } catch (_) { cfg = { demo: true, nativeSymbol: 'KOIN' }; }
   if (cfg.rpId) Passkey.setRpId(cfg.rpId);
   /* The network is stamped on <body> for CSS and for anything that wants
      it; there is no app bar, so the badge itself is optional. */
