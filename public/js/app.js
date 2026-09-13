@@ -1,4 +1,6 @@
-/* KOIN Vault — the Veive smart-account app. One button in:
+/* KOIN Vault — legacy sign-in for existing Veive smart accounts.
+   New account creation and recovery-file sign-in are on koinvault.app.
+   Original account model:
    a new passkey mints a REAL smart account on-chain (server-bootstrapped,
    mana-sponsored); the same scan signs you back in anywhere the passkey
    syncs. Sends are authorized by WebAuthn assertions the CHAIN verifies.
@@ -105,7 +107,7 @@
     if ([...q.keys()].length) history.replaceState(null, '', location.pathname);
   } catch (_) {}
 
-  const VIEWS = ['#view-landing', '#view-wallet', '#view-recover'];
+  const VIEWS = ['#view-landing', '#view-wallet'];
   const show = (view) => {
     for (const v of VIEWS) $(v).hidden = v !== view;
     $('#btn-signout').hidden = view !== '#view-wallet';
@@ -304,33 +306,17 @@
     show('#view-wallet');
   }
 
-  async function createAccount() {
-    let made;
-    try { made = await Passkey.createCredential(); }
-    catch (e) {
-      if (e && e.name === 'InvalidStateError') return signIn(); // this device already has our passkey
-      throw e;
-    }
-    const rec = await api('/api/create-account', {
-      credentialId: made.credentialId, publicKey: made.publicKey, name: 'passkey',
-    });
-    ADDRESS = rec.address; storeAddr(ADDRESS);
-    RECOVERY = null;
-    takeSmart(rec);
-    if (rec.step !== 'active') pollStatus();
-    show('#view-wallet');
-  }
-
-  async function enter(makeNew, pickAnother = false) {
+  async function enter(pickAnother = false) {
     if (ENTERING) return;
     ENTERING = true;
     go.disabled = true;
+    $('#account-not-found').hidden = true;
+    if (alertEl) alertEl.textContent = '';
     try {
-      if (makeNew) await createAccount();
-      else await signIn(pickAnother);
+      await signIn(pickAnother);
     } catch (e) {
       if (e.status === 404) {
-        alertLine('No wallet was found for that passkey. Choose another saved passkey, or use a registered recovery kit.');
+        $('#account-not-found').hidden = false;
       } else alertLine(friendly(e));
     } finally {
       ENTERING = false;
@@ -338,10 +324,8 @@
     }
   }
 
-  go.addEventListener('click', () => enter(!Passkey.remembered()));
-  $('#btn-unlock-existing').addEventListener('click', (e) => { e.preventDefault(); return enter(false, true); });
-  $('#btn-open-recover').addEventListener('click', (e) => { e.preventDefault(); show('#view-recover'); });
-  $('#btn-recover-back').addEventListener('click', (e) => { e.preventDefault(); show('#view-landing'); });
+  go.addEventListener('click', () => enter());
+  $('#btn-unlock-existing').addEventListener('click', (e) => { e.preventDefault(); return enter(true); });
 
   let alertEl = null;
   function alertLine(msg) {
@@ -353,29 +337,8 @@
     alertEl.textContent = msg;
   }
 
-  /* ---------------- recovery flow ---------------- */
-  $('#btn-recover').addEventListener('click', async () => {
-    const st = $('#recover-status');
-    const say = (m, cls) => { st.hidden = false; st.className = 'status' + (cls ? ' ' + cls : ''); st.textContent = m; };
-    const kit = Recovery.parseKit($('#kit-input').value);
-    if (!kit) { say('That doesn\'t look like a recovery kit — paste the whole file, including the Credential and Key lines.', 'err'); return; }
-    try {
-      await Recovery.signTx(kit.privateKey, kit.credentialId, '0x1220' + '00'.repeat(32)); // key sanity check
-    } catch (_) { say('The Key line is damaged — check the file.', 'err'); return; }
-    try {
-      const who = await api('/api/whoami', { credentialId: kit.credentialId });
-      ADDRESS = who.address; storeAddr(ADDRESS);
-      RECOVERY = { credentialId: kit.credentialId, privateKey: kit.privateKey };
-      takeSmart(who);
-      $('#kit-input').value = '';
-      show('#view-wallet');
-      renderCredentials();
-    } catch (e) {
-      say(e.status === 404
-        ? 'No account answers to this kit. Was it activated? (The kit only works after "activate on-chain".)'
-        : (e.message || 'Recovery failed'), 'err');
-    }
-  });
+  /* Recovery-file sign-in is available at https://koinvault.app/?open=recover.
+     Existing users can still generate and activate a kit in Backups here. */
 
   /* ---------------- wallet view ----------------
      Two reads: /api/account for the account's own state (activation step,

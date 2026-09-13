@@ -387,7 +387,12 @@ api.config = async (_params, surface = {}) => {
 /** One tap on the button, existing account unknown → a smart account is
     born. Answers immediately; the two bootstrap transactions run in the
     background and /api/account-status reports progress. */
-api.createAccount = async (body, ip, surface = {}) => {
+// The original site is sign-in only. New registrations arrive through the
+// authenticated KOIN Vault forwarder, which still uses this single backend.
+api.createAccount = async (body, ip, surface = {}, req) => {
+  if (!req || !walletBackend.trustedProxyIp(req, CFG.sponsorWif)) {
+    throw httpError(403, 'New accounts are available at https://koinvault.app/');
+  }
   if (rateLimited('create:ip:' + ip, CFG.maxAccountsPerDayIp, 24 * 3600000)) {
     throw httpError(429, 'this connection created several accounts today already — come back tomorrow');
   }
@@ -417,9 +422,13 @@ api.accountStatus = async (params) => {
 
 /** Which account does this passkey open? (Store first, then the chain's
     own credential index.) */
-api.whoami = async (body) => {
+api.whoami = async (body, ip, surface = {}, req) => {
   const rec = await veive.whoami(body.credentialId);
-  if (!rec) throw httpError(404, 'that passkey has no smart account here — create one first');
+  if (!rec) throw httpError(404, 'No account found for this passkey. Create an account at https://koinvault.app/');
+  const credential = (rec.credentials || []).find(c => c.id === body.credentialId);
+  if (credential && credential.kind === 'recovery' && (!req || !walletBackend.trustedProxyIp(req, CFG.sponsorWif))) {
+    throw httpError(403, 'Use your recovery file at https://koinvault.app/?open=recover to restore your wallet');
+  }
   return { ok: true, ...rec };
 };
 

@@ -61,32 +61,19 @@
       </svg>
     </div>
     <h1>Your wallet is<br><em>your fingerprint</em></h1>
-    <p class="lead">One scan deploys a real <strong>smart account</strong> on Koinos — an on-chain
-      contract whose only key is your passkey (face, fingerprint, or device PIN). The chain
-      itself verifies every action against your biometrics, Veive-protocol style. No password,
-      no seed phrase, no fees — and no key that anyone, including us, could steal.</p>
-    <button class="cta" id="btn-go" disabled>Create Account or Sign In</button>
+    <p class="lead">Sign in to your existing wallet with your passkey.
+      New accounts are available at <a href="https://koinvault.app/">KOIN Vault</a>.</p>
+    <button class="cta" id="btn-go" disabled>Sign In</button>
     <p class="note" id="connection-status" role="status">Connecting to wallet…</p>
+    <p class="note" id="account-not-found" role="status" hidden>No account found for this passkey.
+      <a href="https://koinvault.app/">Create an account and use the updated wallet at KOIN Vault</a>.</p>
     <p class="alt" id="alt-unlock" hidden>Have another saved passkey?
       <a href="#" id="btn-unlock-existing">Choose a saved passkey</a></p>
-    <p class="alt">Lost every passkey? <a href="#" id="btn-open-recover">Recover with your kit</a></p>
+    <p class="alt">Need account recovery? <a href="https://koinvault.app/?open=recover" id="btn-open-recover">Go to KOIN Vault</a>
+      and use your saved recovery file to restore your wallet there.</p>
     <p class="unsupported" id="no-passkey" hidden>This browser has no biometric passkey support —
       try a phone, or a browser with Face ID / fingerprint / Windows Hello.</p>
     <p class="note" id="demo-note" hidden>Demo mode — no chain connected yet; the passkey flow is real, transactions simulate.</p>
-  </section>
-
-  <!-- ─── Recovery ─── -->
-  <section id="view-recover" class="wallet" hidden>
-    <div class="card">
-      <div class="k">Recover your account</div>
-      <p class="hint">Paste the contents of your recovery kit file
-        (<code>koinos-recovery-kit-….txt</code>). Its key signs you in and can register a brand-new
-        passkey — no old passkey needed.</p>
-      <textarea id="kit-input" rows="7" spellcheck="false" placeholder="KOIN Vault — RECOVERY KIT&#10;…"></textarea>
-      <div class="status" id="recover-status" role="status" aria-live="polite" hidden></div>
-      <button class="cta small" id="btn-recover">Open my account</button>
-      <p class="alt"><a href="#" id="btn-recover-back">← Back</a></p>
-    </div>
   </section>
 
   <!-- ─── Wallet: three tabs, four sheets, all inside this one section so

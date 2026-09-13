@@ -712,11 +712,18 @@ and never run two funding workers from copies of one live funding ledger.
 Forwarding preserves the browser Origin and Android restrictions, checks passkey
 proofs at the backend, and never automatically retries transaction POSTs.
 
-The **Create Account or Sign In** button opens the remembered passkey or creates
-a wallet when none is remembered. **Choose a saved passkey** opens the picker
-for an existing wallet on another device. Failed sign-in never switches to
-account creation. Recovery kits download as `.txt` files, with a persistent
-download link for the same kit until activation or discard. A configuration
-outage displays a retrying connection message instead of claiming the wallet
-is in demo mode. Public Koinos and ETH health probes no longer
+The original website is now **sign-in only**. Its **Sign In** button opens an
+existing passkey; a missing account displays a link to create one at KOIN Vault.
+Recovery-file import is available at `https://koinvault.app/?open=recover`.
+Existing original-domain users can still download and activate recovery kits
+and use their wallets while they move.
+
+The original backend rejects direct account creation and recovery-key sign-in.
+KOIN Vault's authenticated API forwarder retains both operations against the
+same records. The deployments must retain their matching `SPONSOR_WIF`, which
+already authenticates forwarded requests; never share that key with a browser.
+A spoofed Origin or forwarding header does not enable account creation.
+
+A configuration outage displays a retrying connection message instead of
+claiming the wallet is in demo mode. Public Koinos and ETH health probes no longer
 block local initialization or sign-in configuration.

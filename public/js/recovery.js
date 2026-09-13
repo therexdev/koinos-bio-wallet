@@ -90,7 +90,7 @@
       '',
       'Anyone holding this file controls the account — keep it OFFLINE',
       '(printed, or on a drive that never touches the internet).',
-      'To use it: open the wallet site, choose "Recover with your kit",',
+      'To use it: open https://koinvault.app/?open=recover',
       'and paste this file. You can then add a new passkey or move funds.',
       '',
     ].join('\n');

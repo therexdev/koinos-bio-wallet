@@ -25,9 +25,10 @@ const { Signer } = require('koilib');
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const account = Signer.fromSeed('startup-existing-fixture').getAddress();
   const credentialId = 'existing-passkey-credential';
+  const recoveryId = 'rk-existing-recovery-fixture';
   fs.writeFileSync(path.join(data, 'accounts.json'), JSON.stringify({ accounts: {
-    [account]: { address: account, credentialId, credentials: [{ id: credentialId, kind: 'passkey' }], step: 'active', external: true },
-  }, byCredential: { [credentialId]: account } }));
+    [account]: { address: account, credentialId, credentials: [{ id: credentialId, kind: 'passkey' }, { id: recoveryId, kind: 'recovery' }], step: 'active', external: true },
+  }, byCredential: { [credentialId]: account, [recoveryId]: account } }));
   fs.writeFileSync(path.join(data, 'funding.json'), '{}');
   const saved = fs.readFileSync(path.join(data, 'accounts.json'));
   const children = [];
@@ -70,6 +71,11 @@ const { Signer } = require('koilib');
     assert.equal((await (await fetch(primary.base + '/api/config')).json()).rpId, 'wallet.usekoinos.com');
     const same = await fetch(frontend.base + '/api/whoami', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credentialId }) });
     assert.equal((await same.json()).address, account);
+    const recoveryRequest = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credentialId: recoveryId }) };
+    assert.equal((await fetch(primary.base + '/api/whoami', recoveryRequest)).status, 403, 'The original site sends recovery users to KOIN Vault');
+    const recovered = await fetch(frontend.base + '/api/whoami', recoveryRequest);
+    assert.equal(recovered.status, 200, 'The actual KOIN Vault forwarder retains recovery');
+    assert.equal((await recovered.json()).address, account, 'Recovery opens the original address');
     assert.match(frontend.logs(), /ready: wallet frontend/);
     const connection = await (await fetch(frontend.base + '/api/dapp/create', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://ouro.lifestyle' }, body: JSON.stringify({ name: 'OURO' }) })).json();
     assert.ok(connection.uri.startsWith('https://koinvault.app/'));

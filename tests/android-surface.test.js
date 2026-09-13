@@ -8,6 +8,9 @@ const vm = require('node:vm');
 const { spawn } = require('node:child_process');
 const { generateKeyPairSync, randomBytes } = require('node:crypto');
 const { androidHtml } = require('../tools/app-surface');
+const { proxyProof } = require('../tools/wallet-backend');
+const sponsor = require('koilib').Signer.fromSeed('legacy-access-test-sponsor').getPrivateKey('wif');
+const vaultHeaders = (url) => ({ 'x-koin-wallet-proxy': proxyProof({ method: 'POST', url }, '192.0.2.22', sponsor) });
 const root = path.join(__dirname, '..');
 const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
@@ -28,10 +31,11 @@ const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
   // be used to finish a conversion from Android either.
   const pendingAddress = require('../tools/chain').newAccountKey().getAddress();
   const pendingId = randomBytes(24).toString('base64url');
+  const recoveryId = 'rk' + randomBytes(24).toString('base64url');
   fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ accounts: { [pendingAddress]: {
     address: pendingAddress, credentialId: pendingId, publicKey: body.publicKey, step: 'active',
-    credentials: [{ id: pendingId, kind: 'passkey', label: 'test' }], ts: Date.now(),
-  } }, byCredential: { [pendingId]: pendingAddress } }));
+    credentials: [{ id: pendingId, kind: 'passkey', label: 'test' }, { id: recoveryId, kind: 'recovery', label: 'test kit' }], ts: Date.now(),
+  } }, byCredential: { [pendingId]: pendingAddress, [recoveryId]: pendingAddress } }));
   fs.writeFileSync(path.join(dir, 'funding.json'), JSON.stringify({ transit: { [pendingAddress]: {
     ethAddress: '0x' + 'ab'.repeat(20), ts: Date.now(),
   } }, jobs: { [pendingAddress]: { demo: true, route: 'B', status: 'awaiting_swap',
@@ -39,7 +43,7 @@ const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
   } } }));
   const port = 3976, base = 'http://localhost:' + port;
   const child = spawn(process.execPath, ['server.js'], {
-    cwd: root, env: { ...process.env, WALLET_BACKEND_URL: 'local', SPONSOR_WIF: '', DEMO_MODE: '1', PORT: String(port), DATA_DIR: dir }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, WALLET_BACKEND_URL: 'local', SPONSOR_WIF: sponsor, DEMO_MODE: '1', PORT: String(port), DATA_DIR: dir }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
     await new Promise((resolve, reject) => {
@@ -97,13 +101,34 @@ const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
       assert.equal(blocked.status, 403, 'generic submit cannot complete a funding step in Android');
     }
     // Same credential/account on both surfaces, with no transit wallet created by the APK.
-    const createdResponse = await post('/android/api/create-account', body);
+    // Legacy signup is closed for browser and APK, including spoofed origins.
+    for (const url of ['/api/create-account', '/android/api/create-account']) {
+      const closed = await post(url, body);
+      assert.equal(closed.status, 403);
+      assert.match((await closed.json()).error, /https:\/\/koinvault\.app/);
+      assert.equal((await post(url, body, { Origin: 'https://koinvault.app', 'x-koin-wallet-proxy': 'forwarded' })).status, 403);
+      assert.equal((await post(url, body, vaultHeaders('/api/submit'))).status, 403, 'A proof for another route cannot authorize signup');
+    }
+    // The authenticated new frontend still creates accounts through this backend.
+    const createdResponse = await post('/android/api/create-account', body, vaultHeaders('/android/api/create-account'));
     assert.equal(createdResponse.status, 200);
     const created = await createdResponse.json();
     const readFunding = () => fs.existsSync(path.join(dir, 'funding.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'funding.json'))) : { transit: {} };
     assert.equal(readFunding().transit[created.address], undefined);
     const whoami = await (await post('/api/whoami', { credentialId })).json();
     assert.equal(whoami.address, created.address);
+    assert.equal((await post('/api/whoami', { credentialId: 'unknown-passkey-id' })).status, 404);
+    for (const url of ['/api/whoami', '/android/api/whoami']) {
+      const recovery = await post(url, { credentialId: recoveryId });
+      assert.equal(recovery.status, 403);
+      assert.match((await recovery.json()).error, /koinvault\.app\/\?open=recover/);
+      const restored = await post(url, { credentialId: recoveryId }, vaultHeaders(url));
+      assert.equal(restored.status, 200);
+      assert.equal((await restored.json()).address, pendingAddress, 'Recovery at KOIN Vault reopens the same account');
+    }
+    const backup = await post('/api/prepare-register', { address: pendingAddress, signerCredentialId: pendingId,
+      newCredential: { credentialId: 'rk' + randomBytes(24).toString('base64url'), publicKey: body.publicKey, kind: 'recovery' } });
+    assert.equal(backup.status, 200, 'Existing passkey users can still prepare a recovery-kit registration');
     const fundingResponse = await fetch(base + '/api/fund/status?credentialId=' + credentialId);
     assert.equal(fundingResponse.status, 200, 'browser Buy remains functional');
     assert.ok((await fundingResponse.json()).ethAddress);
@@ -115,6 +140,7 @@ const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
       assert.match(html, /href="\/android\/"/);
       assert.doesNotMatch(html, /href="\/(?:privacy|delete-account)?"/);
     }
+    console.log('✓ Legacy signup and recovery restrictions preserve authenticated KOIN Vault access and original passkey backups');
     console.log('✓ Android HTML, APIs, shortcuts and account creation are wallet-only; browser/PWA Buy and shared accounts remain available');
   } finally {
     child.kill();
