@@ -119,8 +119,8 @@ const Passkey = (() => {
       remembered credential is gone from this device (lost phone, stale
       browser data), fall back to the discoverable picker so any surviving
       credential — a backup passkey included — can answer. */
-  async function identify() {
-    const id = storedId();
+  async function identify(pickAnother = false) {
+    const id = pickAnother ? null : storedId();
     if (id) {
       try { return (await assert(crypto.getRandomValues(new Uint8Array(32)), [id])).credentialId; }
       catch (e) { if (!e || e.name !== 'NotAllowedError') throw e; }

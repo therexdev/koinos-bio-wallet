@@ -31,6 +31,7 @@ const funding = require('./tools/funding');
 const appSurface = require('./tools/app-surface');
 const dappRelay = require('./tools/dapp-relay');
 const dappAuth = require('./tools/dapp-auth');
+const walletBackend = require('./tools/wallet-backend');
 const dappLaunch = require('./tools/dapp-launch');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
@@ -43,7 +44,7 @@ async function priceEthProvider() {
   if (!_priceEthProvider) _priceEthProvider = await makeEthProvider().catch((e) => { _priceEthProvider = null; throw e; });
   return _priceEthProvider;
 }
-const { pickRpcs, NETWORKS } = require('./tools/rpc');
+const { rpcCandidates, NETWORKS } = require('./tools/rpc');
 
 /* Digital Asset Links for the Android app (android/): the site vouches for
    the app's package + signing certificate, Chrome then opens the Trusted
@@ -56,6 +57,8 @@ const androidFingerprints = (raw) => String(raw || '').split(/[\s,]+/).map((f) =
 
 const CFG = {
   port: parseInt(process.env.PORT || '3000', 10),
+  // 'local' explicitly selects an independent backend; it needs its own data.
+  backendUrl: String(process.env.WALLET_BACKEND_URL ?? '').trim(),
   androidPackage: (process.env.ANDROID_PACKAGE || 'wallet.koinos.app').trim(),
   androidFingerprints: androidFingerprints(process.env.ANDROID_SHA256_FINGERPRINTS),
   network: (process.env.KOINOS_NETWORK || 'harbinger').trim(),
@@ -97,6 +100,10 @@ const CFG = {
 
 let DEMO = CFG.demo;
 let BOOTING = true;
+let BOOT_ERROR = false;
+const forwardWallet = CFG.backendUrl && CFG.backendUrl !== 'local'
+  ? walletBackend.createProxy({ backendUrl: CFG.backendUrl, publicUrl: CFG.publicUrl || 'https://wallet.usekoinos.com',
+      rpId: CFG.passkeyRpId, secret: CFG.sponsorWif, clientIp }) : null;
 const prices = createPrices({
   chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
   coingecko: process.env.PRICES_COINGECKO !== '0',
@@ -125,6 +132,8 @@ setInterval(() => {
 }, 600000).unref();
 
 function clientIp(req) {
+  const forwarded = walletBackend.trustedProxyIp(req, CFG.sponsorWif);
+  if (forwarded) return forwarded;
   if (CFG.trustProxyHops > 0) {
     const fwd = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
     if (fwd.length >= CFG.trustProxyHops) return fwd[fwd.length - CFG.trustProxyHops];
@@ -198,9 +207,8 @@ api.dappChallenge = async (body, _ip, _surface, req) => {
   const session = dappSession(body);
   if (DEMO) throw httpError(503, 'App connections require the live wallet');
   if (session.address) throw httpError(409, 'This connection is already approved; create a new QR');
-  const origin = CFG.publicUrl || `${String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()}://${req.headers.host}`;
-  if (req.headers.origin !== origin) throw httpError(403, 'Approve from the wallet site');
-  return { ok: true, challenge: dappAuth.issue(session.id, String(body.address || ''), origin, CFG.passkeyRpId || new URL(origin).hostname) };
+  const { origin, rpId } = walletBackend.approvalIdentity(req, CFG);
+  return { ok: true, challenge: dappAuth.issue(session.id, String(body.address || ''), origin, rpId) };
 };
 
 api.dappConnect = async (body) => {
@@ -265,8 +273,8 @@ api.dappApprove = async (body, _ip, _surface, req) => {
     if (request.mode === 'launch') {
       const tx = body.transaction;
       if (tx.id !== request.transaction.id || tx.signatures?.length !== 1) throw httpError(400, 'Invalid launch approval');
-      const origin = CFG.publicUrl || `${String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()}://${req.headers.host}`;
-      await dappAuth.verifyProof(session.address, tx.id, tx.signatures[0], chain, { origin, rpId: CFG.passkeyRpId || new URL(origin).hostname });
+      const identity = walletBackend.approvalIdentity(req, CFG);
+      await dappAuth.verifyProof(session.address, tx.id, tx.signatures[0], chain, identity);
       const signedTransaction = { id: tx.id, header: request.transaction.header, operations: request.transaction.operations, signatures: tx.signatures };
       dappRelay.settle(request, 'signed', { signedTransaction, txid: tx.id });
       return { ok: true, txid: tx.id, signedOnly: true };
@@ -334,6 +342,18 @@ const BUILD = (() => {
   return { version, commit: commit ? commit.slice(0, 12) : null };
 })();
 
+let configFloatValue, configFloatAt = 0, configFloatPending = false;
+function configFloat() {
+  if (Date.now() - configFloatAt < 60000) return configFloatValue;
+  if (!configFloatPending) {
+    configFloatPending = true;
+    Promise.resolve().then(() => funding.floatHealth()).then(value => {
+      configFloatValue = value; configFloatAt = Date.now();
+    }).catch(() => {}).finally(() => { configFloatPending = false; });
+  }
+  return undefined; // Optional gas diagnostics never block sign-in configuration.
+}
+
 api.config = async (_params, surface = {}) => {
   const net = NETWORKS[CFG.network];
   return {
@@ -347,7 +367,7 @@ api.config = async (_params, surface = {}) => {
     /* The gas float, so its health can be seen without a passkey. Everything
        here is already public on Ethereum; cached for a minute because this
        endpoint is hit on every page load. */
-    float: surface.android ? undefined : await funding.floatHealth().catch(() => undefined),
+    float: surface.android ? undefined : configFloat(),
     accountKind: 'veive',
     network: CFG.network,
     networkLabel: net.label,
@@ -1008,9 +1028,10 @@ const server = http.createServer(async (req, res) => {
     const surface = appSurface.requestSurface(pathname, req.headers);
     const apiPath = surface.apiPath;
     if (apiPath.startsWith('/api/')) {
+      if (forwardWallet) return await forwardWallet(req, res);
       if (BOOTING) {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '3' });
-        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.' }));
+        return res.end(JSON.stringify({ error: BOOT_ERROR ? 'Wallet startup failed. Check the application runtime log.' : 'Wallet is starting. Please reload in a few seconds.' }));
       }
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
@@ -1065,25 +1086,15 @@ server.listen(CFG.port, () => {
   console.log(`serving:  http://localhost:${CFG.port} (initializing)`);
 });
 
-async function connectChain() {
-  const rpcUrls = await pickRpcs(CFG.network);
-  chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
-  const [sponsorMana, sponsorKoin] = await Promise.all([
-    chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
-  ]);
-  console.log(`sponsor:  ${chain.sponsorAddress()} (${sponsorKoin} ${NETWORKS[CFG.network].nativeSymbol}, ${Math.floor(sponsorMana)} mana)`);
-  console.log(`modules:  sign=${CFG.modules.modSign} validation=${CFG.modules.modValidation}`);
-  console.log(`          verifier=${CFG.modules.verifier}`);
-}
-
 function applyMode() {
-  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
-  if (!DEMO) veive.reconcile();
   /* The funding rails run live only on mainnet (the Vortex bridge, the
      Uniswap pools, Jupiter and Wormhole are mainnet); everywhere else they
      simulate. */
   const fundingDemo = DEMO || CFG.network !== 'mainnet';
+  // Claim the single-worker lock before reading or updating account records.
   funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
+  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
+  if (!DEMO) veive.reconcile();
   console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
   /* The Solana rail probes its (ESM) SDK asynchronously; report it once known. */
   funding._sdkReady().then(() => {
@@ -1093,10 +1104,13 @@ function applyMode() {
 }
 
 (async () => {
+  if (forwardWallet) {
+    console.log('ready: wallet frontend; all API requests use the original wallet backend');
+    return; // Never open account files, claim a data lock, or start funding here.
+  }
   console.log('KOIN Vault — Veive smart accounts');
   console.log(`network:  ${CFG.network}`);
   const modulesSet = !!(CFG.modules.modSign && CFG.modules.modValidation && CFG.modules.verifier);
-  let retryable = false;
   if (!CFG.sponsorWif) {
     DEMO = true;
     BOOT_NOTE = 'no sponsor wallet configured';
@@ -1106,16 +1120,10 @@ function applyMode() {
     BOOT_NOTE = 'smart-account contracts not deployed yet';
     console.log('mode:     DEMO — set VERIFIER_ADDR / MOD_SIGN_WEBAUTHN_ADDR / MOD_VALIDATION_SIGNATURE_ADDR (run tools/infra-deploy.js)');
   } else if (!DEMO) {
-    try {
-      await connectChain();
-    } catch (e) {
-      DEMO = true;
-      retryable = true; // config is complete — only this step failed
-      /* Surface the REAL reason on /api/config — 'unreachable' alone hides
-         things like a malformed WIF or a wrong network. */
-      BOOT_NOTE = `chain setup failed — retrying automatically (${String(e.message || e).slice(0, 140)})`;
-      console.log(`mode:     DEMO — ${e.message} (retrying every 60s)`);
-    }
+    // Local state must not wait for public RPC probes. The existing provider
+    // performs bounded failover when a blockchain operation needs it.
+    chain.configure({ network: CFG.network, rpcs: rpcCandidates(CFG.network), sponsorWif: CFG.sponsorWif, modules: CFG.modules });
+    chain.sponsorAddress(); // Validate the configured key locally, without RPC.
   } else {
     console.log('mode:     DEMO (DEMO_MODE=1)');
   }
@@ -1129,23 +1137,9 @@ function applyMode() {
   applyMode();
   BOOTING = false;
 
-  /* A live-configured server must never stay stuck in demo because one RPC
-     probe failed at boot: keep retrying and flip to live when the chain
-     answers. */
-  if (retryable) {
-    const timer = setInterval(async () => {
-      try {
-        await connectChain();
-        DEMO = false;
-        BOOT_NOTE = '';
-        applyMode();
-        console.log('mode:     LIVE — chain reachable again');
-        clearInterval(timer);
-      } catch (_) { /* still down — keep trying */ }
-    }, 60000);
-    if (timer.unref) timer.unref();
-  }
-
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   console.log(`ready:    ${DEMO ? 'demo mode' : 'live'}`);
-})();
+})().catch(e => {
+  BOOT_ERROR = true;
+  console.error('Wallet initialization failed:', e.message);
+});

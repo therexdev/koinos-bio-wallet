@@ -22,7 +22,7 @@ const FP2 = '11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:7
 function boot(extraEnv, port) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-al-'));
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: { ...process.env, DEMO_MODE: '1', PORT: String(port), DATA_DIR: dataDir, ...extraEnv },
+    env: { ...process.env, WALLET_BACKEND_URL: 'local', DEMO_MODE: '1', PORT: String(port), DATA_DIR: dataDir, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   return new Promise((resolve, reject) => {

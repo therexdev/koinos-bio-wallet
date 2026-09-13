@@ -690,3 +690,29 @@ concept. If you made a v1 wallet: the same passkey still opens that same
 PRF wallet on [usekoinos.com](https://usekoinos.com) (shared salt + apex
 rpId), or import the WIF you exported. This app's passkeys are now scoped to
 its own hostname and its accounts live on-chain.
+
+
+### Running both wallet domains
+
+`wallet.usekoinos.com` remains the authoritative wallet backend. The `koin-vault`
+repository serves `koinvault.app` and forwards its API requests to the original
+wallet by default. The new frontend does not open `DATA_DIR`, acquire its lock,
+or start funding workers. Both domains use the original backend's account records,
+prepared transactions, and funding state. No data copy or lock removal is needed.
+
+Deploy the new frontend first so it releases the shared data lock, then deploy
+or restart the original backend. Keep the original runtime environment and
+`DATA_DIR` unchanged. Each domain retains its own passkey relying-party ID.
+Original saved passkeys continue to sign in at `wallet.usekoinos.com`; this update
+does not change their on-chain authority or enable cross-domain passkey reuse.
+
+`WALLET_BACKEND_URL` overrides the upstream origin. `local` explicitly selects a
+standalone backend. Never point two standalone backends at the same data directory,
+and never run two funding workers from copies of one live funding ledger.
+Forwarding preserves the browser Origin and Android restrictions, checks passkey
+proofs at the backend, and never automatically retries transaction POSTs.
+
+The sign-in button always signs in. New-wallet creation is a separate confirmed
+action. A configuration outage displays a retrying connection message instead of
+claiming the wallet is in demo mode. Public Koinos and ETH health probes no longer
+block local initialization or sign-in configuration.

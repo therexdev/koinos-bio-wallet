@@ -65,9 +65,11 @@
       contract whose only key is your passkey (face, fingerprint, or device PIN). The chain
       itself verifies every action against your biometrics, Veive-protocol style. No password,
       no seed phrase, no fees — and no key that anyone, including us, could steal.</p>
-    <button class="cta" id="btn-go">Create Account or Sign In</button>
-    <p class="alt" id="alt-unlock" hidden>Made your account on another device?
-      <a href="#" id="btn-unlock-existing">Open it with a synced passkey</a></p>
+    <button class="cta" id="btn-go" disabled>Sign in with passkey</button>
+    <button class="ghost wide" id="btn-create-account" type="button" disabled>Create a new wallet</button>
+    <p class="note" id="connection-status" role="status">Connecting to wallet…</p>
+    <p class="alt" id="alt-unlock" hidden>Have another saved passkey?
+      <a href="#" id="btn-unlock-existing">Choose a saved passkey</a></p>
     <p class="alt">Lost every passkey? <a href="#" id="btn-open-recover">Recover with your kit</a></p>
     <p class="unsupported" id="no-passkey" hidden>This browser has no biometric passkey support —
       try a phone, or a browser with Face ID / fingerprint / Windows Hello.</p>

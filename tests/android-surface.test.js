@@ -39,7 +39,7 @@ const template = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
   } } }));
   const port = 3976, base = 'http://localhost:' + port;
   const child = spawn(process.execPath, ['server.js'], {
-    cwd: root, env: { ...process.env, SPONSOR_WIF: '', DEMO_MODE: '1', PORT: String(port), DATA_DIR: dir }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, WALLET_BACKEND_URL: 'local', SPONSOR_WIF: '', DEMO_MODE: '1', PORT: String(port), DATA_DIR: dir }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
     await new Promise((resolve, reject) => {

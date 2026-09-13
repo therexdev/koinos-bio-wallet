@@ -40,15 +40,32 @@
     const headers = WalletClient.android ? { 'X-Wallet-Client': 'android' } : {};
     const r = await fetch(WalletClient.apiPath(path), body
       ? { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-      : { headers });
+      : { headers, ...(path === '/api/config' ? { signal: AbortSignal.timeout(12000) } : {}) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(data.error || 'request failed'); e.status = r.status; throw e; }
     return data;
   }
 
   /* ---------------- boot ---------------- */
-  let cfg = null;
-  try { cfg = await api('/api/config'); } catch (_) { cfg = { demo: true, nativeSymbol: 'KOIN' }; }
+  async function waitForConfig() {
+    const status = $('#connection-status');
+    for (;;) {
+      try {
+        const value = await api('/api/config');
+        if (value.ok !== true || typeof value.demo !== 'boolean') throw new Error('Invalid wallet configuration');
+        status.hidden = true;
+        return value;
+      } catch (_) {
+        status.hidden = false;
+        status.textContent = 'Wallet connection unavailable. Retrying automatically…';
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+  }
+  // A failed request is an unavailable connection, never a demo wallet.
+  $('#btn-go').disabled = true;
+  $('#btn-create-account').disabled = true;
+  const cfg = await waitForConfig();
   if (cfg.rpId) Passkey.setRpId(cfg.rpId);
   /* The network is stamped on <body> for CSS and for anything that wants
      it; there is no app bar, so the badge itself is optional. */
@@ -262,11 +279,14 @@
 
   /* ---------------- landing: THE button ---------------- */
   const go = $('#btn-go');
+  const create = $('#btn-create-account');
+  let ENTERING = false;
   async function refreshLandingSupport() {
     const ok = await Passkey.platformReady();
-    go.disabled = !ok;
+    go.disabled = !ok || ENTERING;
+    create.disabled = !ok || ENTERING;
     $('#no-passkey').hidden = ok;
-    if (ok && !Passkey.remembered()) $('#alt-unlock').hidden = false;
+    $('#alt-unlock').hidden = !ok;
   }
   await refreshLandingSupport();
 
@@ -276,8 +296,8 @@
     return (e && e.message) || 'Passkey ceremony failed';
   }
 
-  async function signIn() {
-    const credentialId = await Passkey.identify();
+  async function signIn(pickAnother = false) {
+    const credentialId = await Passkey.identify(pickAnother);
     const who = await api('/api/whoami', { credentialId });
     ADDRESS = who.address; storeAddr(ADDRESS);
     RECOVERY = null;
@@ -303,26 +323,30 @@
     show('#view-wallet');
   }
 
-  async function enter(create) {
+  async function enter(makeNew, pickAnother = false) {
+    if (ENTERING) return;
+    ENTERING = true;
     go.disabled = true;
+    create.disabled = true;
     try {
-      if (create) await createAccount();
-      else await signIn();
+      if (makeNew) await createAccount();
+      else await signIn(pickAnother);
     } catch (e) {
       if (e.status === 404) {
-        /* A passkey with no account behind it (never bootstrapped) can't be
-           adopted — its public key was only available at creation. Let the
-           next tap mint a fresh one. */
-        Passkey.forget(); storeAddr(null);
-        alertLine('That passkey has no smart account here — tap the button to create a fresh one.');
+        alertLine('No wallet was found for that passkey. Choose another saved passkey, or use a registered recovery kit.');
       } else alertLine(friendly(e));
     } finally {
-      go.disabled = false;
+      ENTERING = false;
+      await refreshLandingSupport();
     }
   }
 
-  go.addEventListener('click', () => enter(!Passkey.remembered()));
-  $('#btn-unlock-existing').addEventListener('click', (e) => { e.preventDefault(); enter(false); });
+  go.addEventListener('click', () => enter(false));
+  create.addEventListener('click', () => {
+    if (ENTERING || !confirm('Create a new wallet?\n\nThis creates a separate account with a new address. To open an existing wallet, cancel and choose Sign in with passkey.')) return;
+    return enter(true);
+  });
+  $('#btn-unlock-existing').addEventListener('click', (e) => { e.preventDefault(); return enter(false, true); });
   $('#btn-open-recover').addEventListener('click', (e) => { e.preventDefault(); show('#view-recover'); });
   $('#btn-recover-back').addEventListener('click', (e) => { e.preventDefault(); show('#view-landing'); });
 
@@ -645,8 +669,7 @@
     BALANCE_SATS = '';
     ADDRESS = null; ACTIVE = false; RECOVERY = null; CREDENTIALS = []; PENDING_KIT = null; PENDING_BACKUP = null;
     /* The credential id stays remembered: it's public on-chain anyway, the
-       biometric still gates every ceremony, and forgetting it would make the
-       next tap CREATE a second account instead of signing back in. */
+       biometric still gates every ceremony. Sign-in never creates accounts. */
     storeAddr(null);
     try { localStorage.removeItem('bw_wif'); localStorage.removeItem('bw_passkey_id'); } catch (_) {} // v1 leftovers
     UI.reset(); if (WalletClient.canBuy) Fund.forget();
