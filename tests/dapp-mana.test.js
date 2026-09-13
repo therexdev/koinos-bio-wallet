@@ -7,6 +7,7 @@ const source = fs.readFileSync(require.resolve('../server'), 'utf8');
 let available = BigInt(K.rcLimitDapp), prepared = 0, requests = 0;
 const session = { address: 'user', origin: 'https://trade.example' };
 const context = {
+  dappProducer: require("../tools/dapp-producer"),
   api: {}, DEMO: false, CFG: {}, BigInt,
   dappSession: () => session,
   rateLimited: () => false,

@@ -728,3 +728,19 @@ A spoofed Origin or forwarding header does not enable account creation.
 A configuration outage displays a retrying connection message instead of
 claiming the wallet is in demo mode. Public Koinos and ETH health probes no longer
 block local initialization or sign-in configuration.
+
+### Koinos AI producer signing
+
+Koinos AI Test can pair with Koin Vault using **Connect App** and a QR code.
+Its origin is `https://koinosai.com`; deployments that override `DAPP_ORIGINS`
+must include that origin. `/api/config` advertises `features.kaiProducer` only
+when this deployment allows KAI and uses live Mainnet. Update the authoritative
+`wallet.usekoinos.com` backend too when Koin Vault runs as its frontend proxy.
+
+KAI requests only PoB hot-key registration, a burn to the connected wallet's
+own VHP, or a KOIN/VHP transfer. The backend decodes the actual operations to
+show the producer, full hot public key, amount and recipient before passkey
+approval. It rejects unrelated calls and excessive burn allowances. Wallet
+approval submits through the existing sponsored smart-account transaction
+flow. The phone never exports a private key. Disconnecting cancels unsubmitted
+requests, but cannot undo transactions already submitted to the chain.

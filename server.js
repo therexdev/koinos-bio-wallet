@@ -33,6 +33,7 @@ const dappRelay = require('./tools/dapp-relay');
 const dappAuth = require('./tools/dapp-auth');
 const walletBackend = require('./tools/wallet-backend');
 const dappLaunch = require('./tools/dapp-launch');
+const dappProducer = require('./tools/dapp-producer');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
 const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
@@ -92,7 +93,7 @@ const CFG = {
   maxAccountsPerDayIp: parseInt(process.env.MAX_ACCOUNTS_PER_DAY || '3', 10),
   maxAccountsPerDayGlobal: parseInt(process.env.MAX_ACCOUNTS_PER_DAY_GLOBAL || '20', 10),
   maxCredentialsPerAccount: parseInt(process.env.MAX_CREDENTIALS_PER_ACCOUNT || '32', 10),
-  dappOrigins: String(process.env.DAPP_ORIGINS || 'https://trade.koinoskit.site,https://app.tradekoinos.com,https://ouro.lifestyle,https://www.ouro.lifestyle')
+  dappOrigins: String(process.env.DAPP_ORIGINS || 'https://trade.koinoskit.site,https://app.tradekoinos.com,https://ouro.lifestyle,https://www.ouro.lifestyle,https://koinosai.com')
     .split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean),
   publicUrl: String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, ''),
   demo: process.env.DEMO_MODE === '1',
@@ -233,6 +234,12 @@ api.dappRequest = async (body, ip, _surface, req) => {
   let operations;
   try { operations = dappRelay.validateOperations(body.operations); }
   catch (e) { throw httpError(400, e.message); }
+  let summary = body.summary;
+  if (session.origin === dappProducer.ORIGIN) {
+    if (DEMO) throw httpError(503, 'KAI producer signing requires the live wallet');
+    try { summary = await dappProducer.reviewProducer(operations, session.address, CFG.network); }
+    catch (e) { throw httpError(400, e.message); }
+  }
   let tx;
   if (DEMO) tx = { id: demoTxid() };
   else {
@@ -243,7 +250,7 @@ api.dappRequest = async (body, ip, _surface, req) => {
     if (sponsorRc < requiredRc) throw httpError(503, 'The sponsor needs 100 available mana to approve this trade. Its mana is recharging; your wallet balance is not used for this sponsored transaction.');
     tx = await chain.prepareUserTx(session.address, operations, { rcLimit: chain.K.rcLimitDapp });
   }
-  const request = dappRelay.addRequest(session, { operations, summary: body.summary, transaction: tx });
+  const request = dappRelay.addRequest(session, { operations, summary, transaction: tx });
   return { ok: true, requestId: request.id, expiresAt: request.expires };
 };
 
@@ -1060,7 +1067,7 @@ const server = http.createServer(async (req, res) => {
         if (surface.android && apiPath === '/api/health') url.searchParams.delete('rail');
         out = await GET_ROUTES[apiPath](url.searchParams, surface);
         if (apiPath === '/api/config') {
-          out = { ...out, client: surface.android ? 'android' : 'web', features: { buy: !surface.android } };
+          out = { ...out, client: surface.android ? 'android' : 'web', features: { kaiProducer: !DEMO && CFG.network === "mainnet" && CFG.dappOrigins.includes(dappProducer.ORIGIN), buy: !surface.android } };
           if (surface.android) { delete out.float; delete out.solRail; }
         }
       } else if (req.method === 'POST' && POST_ROUTES[apiPath]) {
