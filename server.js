@@ -100,12 +100,13 @@ let BOOTING = true;
 const BOOT_ID = require('node:crypto').randomUUID();
 const BOOT_STARTED = Date.now();
 let BOOT_STAGE = 'initializing';
+let BOOT_FAILURE = null;
 function bootStage(stage) {
   BOOT_STAGE = stage;
   console.log(`startup: ${BOOT_ID} ${stage}`);
 }
 function bootStatus() {
-  return { instance: BOOT_ID, uptimeSeconds: Math.floor((Date.now() - BOOT_STARTED) / 1000), stage: BOOT_STAGE };
+  return { instance: BOOT_ID, uptimeSeconds: Math.floor((Date.now() - BOOT_STARTED) / 1000), stage: BOOT_STAGE, ...(BOOT_FAILURE ? { failure: BOOT_FAILURE } : {}) };
 }
 const prices = createPrices({
   chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
@@ -1020,7 +1021,7 @@ const server = http.createServer(async (req, res) => {
     if (apiPath.startsWith('/api/')) {
       if (BOOTING) {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '3' });
-        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.', ...(apiPath === '/api/health' ? { startup: bootStatus() } : {}) }));
+        return res.end(JSON.stringify({ error: BOOT_FAILURE ? 'Wallet startup is blocked. Check /api/health for details.' : 'Wallet is starting. Please reload in a few seconds.', ...(apiPath === '/api/health' ? { startup: bootStatus() } : {}) }));
       }
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
@@ -1089,13 +1090,15 @@ function connectChain() {
 }
 
 function applyMode() {
-  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
-  if (!DEMO) veive.reconcile();
   /* The funding rails run live only on mainnet (the Vortex bridge, the
      Uniswap pools, Jupiter and Wormhole are mainnet); everywhere else they
      simulate. */
   const fundingDemo = DEMO || CFG.network !== 'mainnet';
+  bootStage('opening-funding-ledger');
   funding.configure({ dataDir: CFG.dataDir, demo: fundingDemo, network: 'mainnet' });
+  bootStage('opening-account-store');
+  veive.configure({ dataDir: CFG.dataDir, demo: DEMO });
+  if (!DEMO) veive.reconcile();
   console.log(`funding:  ETH/USDC/USDT→KOIN ${fundingDemo ? 'demo' : 'LIVE (Vortex + Uniswap)'}`);
   /* The Solana rail probes its (ESM) SDK asynchronously; report it once known. */
   funding._sdkReady().then(() => {
@@ -1162,4 +1165,15 @@ function applyMode() {
 
   console.log(`passkey:  rpId = ${CFG.passkeyRpId || '(page hostname)'}`);
   console.log(`ready:    ${DEMO ? 'demo mode' : 'live'}`);
-})();
+})().catch(error => {
+  // Preserve the HTTP listener and fail closed; operators can read the actual
+  // startup category instead of an endless crash/restart with a generic 503.
+  BOOTING = true;
+  const message = String(error?.message || error);
+  BOOT_FAILURE = /Another funding worker/.test(message) ? 'wallet_process_conflict'
+    : /worker lock/.test(message) ? 'funding_lock_inspection_required'
+    : /funding ledger/.test(message) ? 'funding_ledger_unreadable'
+    : ['EACCES', 'EPERM', 'EROFS'].includes(error?.code) ? 'data_directory_permission_denied'
+    : 'startup_failed';
+  console.error(`startup failed [${BOOT_FAILURE}]:`, error);
+});
