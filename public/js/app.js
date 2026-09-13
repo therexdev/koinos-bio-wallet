@@ -201,6 +201,7 @@
     $('#dapp-name').textContent = app.name;
     $('#dapp-origin').textContent = app.origin;
     $('#dapp-ops').textContent = request.operations.map((op) => {
+      if (op.upload_contract) return `Deploy collection ${op.upload_contract.contract_id}`;
       const call = op.call_contract || {};
       const id = String(call.contract_id || 'unknown');
       return `${id.slice(0, 7)}…${id.slice(-5)} · entry ${call.entry_point}`;
@@ -244,7 +245,7 @@
       const blob = await signPrepared(request.transaction);
       if (DAPP !== pair || pair.address !== ADDRESS) throw new Error('Wallet account changed; reconnect');
       const result = await api('/api/dapp/approve', { ...pair, requestId: request.id, transaction: { ...request.transaction, signatures: [blob] } });
-      paintDappRequest(null, null); dappSay(`Approved · ${result.txid.slice(0, 14)}…`, 'ok'); void paint();
+      paintDappRequest(null, null); dappSay(result.signedOnly ? 'Launch approved. Return to OURO to follow deployment.' : `Approved · ${result.txid.slice(0, 14)}…`, 'ok'); void paint();
     } catch (e) { dappSay(friendly(e), 'err'); }
     finally { btn.disabled = false; $('#btn-dapp-reject').disabled = false; DAPP_BUSY = false; }
   });

@@ -565,6 +565,17 @@ Connection approvals require a fresh WebAuthn assertion, checked for origin, rel
 
 The Home screen's **Connect** button scans an expiring QR code from a supported app. The QR contains only a random session id and secret. It never contains a private key, passkey, or reusable signature. Connected apps may request contract-call transactions; KOIN Vault rebuilds each transaction with the smart account as payee, shows the requesting site and contract calls, and requires a fresh passkey approval before the sponsor co-signs and broadcasts it. Sessions expire after 30 minutes, requests after 10 minutes, and the user can reject a request or disconnect the app at any time.
 
+OURO paid launches use the separate `/api/dapp/launch` endpoint. Only OURO's
+allowed origins can request this flow. It accepts exactly a KOIN launch-fee
+transfer and a new collection upload, already signed by the collection key.
+Vault checks the network, transaction hash/operation commitment, fee owner,
+collection signer and a maximum 200-mana ceiling paid by OURO. The approval
+card shows the exact fee, recipient and collection. A fresh registered
+passkey signs the transaction; Vault returns that signature without sending
+the transaction. OURO independently verifies it, adds its sponsor signature,
+and broadcasts fee and upload together. Ordinary dApp requests still reject
+contract uploads. Deploy both repositories before testing a paid launch.
+
 Set `DAPP_ORIGINS` to the exact deployed origins. Do not use `*`; origin allowlisting and the per-session secret are separate protections.
 
 Missing sponsor **or** module addresses ⇒ the app boots in demo mode and says

@@ -12,6 +12,9 @@ async function verify(session, address, challenge, signature, chain) {
   const expected = pending.get(challenge);
   pending.delete(challenge); // single use, including failed attempts
   if (!expected || expected.session !== session || expected.address !== address || expected.expires <= Date.now()) throw new Error('Connection approval expired; scan again');
+  return verifyProof(address, challenge, signature, chain, expected);
+}
+async function verifyProof(address, challenge, signature, chain, expected) {
   const raw = Buffer.from(String(signature || ''), 'base64url');
   if (raw.length > 8192 || raw[0] !== 255 || raw[1] !== 2) throw new Error('Passkey approval required');
   const auth = await chain.modSignSerializer().deserialize(raw.subarray(2), 'authentication_data');
@@ -42,4 +45,4 @@ async function verify(session, address, challenge, signature, chain) {
   } catch (_) { /* malformed keys and signatures fail closed */ }
   if (!valid) throw new Error('Passkey signature verification failed. Please scan again.');
 }
-module.exports = { issue, verify };
+module.exports = { issue, verify, verifyProof };

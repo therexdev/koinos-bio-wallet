@@ -31,6 +31,7 @@ const funding = require('./tools/funding');
 const appSurface = require('./tools/app-surface');
 const dappRelay = require('./tools/dapp-relay');
 const dappAuth = require('./tools/dapp-auth');
+const dappLaunch = require('./tools/dapp-launch');
 const { createPrices } = require('./tools/prices');
 const ethSwap = require('./tools/eth/eth-swap');
 const { makeProvider: makeEthProvider } = require('./tools/eth/eth-bridge');
@@ -238,19 +239,38 @@ api.dappRequest = async (body, ip, _surface, req) => {
   return { ok: true, requestId: request.id, expiresAt: request.expires };
 };
 
+api.dappLaunch = async (body, ip, _surface, req) => {
+  const session = dappSession(body);
+  if (DEMO) throw httpError(503, 'Launch approvals require the live wallet');
+  if (String(req.headers.origin || '').replace(/\/+$/, '') !== session.origin) throw httpError(403, 'connection origin does not match');
+  if (rateLimited('dapp:launch:' + session.address, 10, 60000)) throw httpError(429, 'Too many launch requests');
+  const validated = await dappLaunch.validateLaunch(session, body.transaction, chain);
+  const request = dappRelay.addRequest(session, validated);
+  return { ok: true, requestId: request.id, expiresAt: request.expires };
+};
+
 api.dappPending = async (query) => {
   const session = dappRelay.get(query.get('sessionId'), query.get('secret'));
   if (!session) throw httpError(404, 'connection not found or expired');
   return { ok: true, app: dappRelay.publicSession(session), requests: dappRelay.pending(session) };
 };
 
-api.dappApprove = async (body) => {
+api.dappApprove = async (body, _ip, _surface, req) => {
   const session = dappSession(body);
   const request = dappRelay.request(session, body.requestId);
   if (!request || request.status !== 'pending') throw httpError(404, 'signing request not found or already handled');
   if (JSON.stringify(body.transaction?.header) !== JSON.stringify(request.transaction.header) || JSON.stringify(body.transaction?.operations) !== JSON.stringify(request.transaction.operations)) throw httpError(400, 'Transaction changed after preparation');
   dappRelay.settle(request, 'submitting');
   try {
+    if (request.mode === 'launch') {
+      const tx = body.transaction;
+      if (tx.id !== request.transaction.id || tx.signatures?.length !== 1) throw httpError(400, 'Invalid launch approval');
+      const origin = CFG.publicUrl || `${String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()}://${req.headers.host}`;
+      await dappAuth.verifyProof(session.address, tx.id, tx.signatures[0], chain, { origin, rpId: CFG.passkeyRpId || new URL(origin).hostname });
+      const signedTransaction = { id: tx.id, header: request.transaction.header, operations: request.transaction.operations, signatures: tx.signatures };
+      dappRelay.settle(request, 'signed', { signedTransaction, txid: tx.id });
+      return { ok: true, txid: tx.id, signedOnly: true };
+    }
     let txid;
     if (DEMO) {
       await demoCheckSmartSignature(body.transaction, { txId: request.transaction.id, address: session.address });
@@ -282,7 +302,7 @@ api.dappRequestStatus = async (query) => {
   if (!session) throw httpError(404, 'connection not found or expired');
   const request = dappRelay.request(session, query.get('requestId'));
   if (!request) throw httpError(404, 'signing request not found');
-  return { ok: true, status: request.status, txid: request.txid, error: request.error };
+  return { ok: true, status: request.status, txid: request.txid, error: request.error, signedTransaction: request.signedTransaction };
 };
 
 api.dappDisconnect = async (body) => { dappRelay.disconnect(dappSession(body)); return { ok: true }; };
@@ -976,6 +996,7 @@ const POST_ROUTES = {
   '/api/fund/resume': api.fundResume, '/api/fund/reset': api.fundReset,
   '/api/dapp/create': api.dappCreate, '/api/dapp/connect': api.dappConnect,
   '/api/dapp/challenge': api.dappChallenge,
+  '/api/dapp/launch': api.dappLaunch,
   '/api/dapp/request': api.dappRequest, '/api/dapp/approve': api.dappApprove,
   '/api/dapp/reject': api.dappReject, '/api/dapp/disconnect': api.dappDisconnect,
 };
@@ -1012,7 +1033,7 @@ const server = http.createServer(async (req, res) => {
           if (surface.android) { delete out.float; delete out.solRail; }
         }
       } else if (req.method === 'POST' && POST_ROUTES[apiPath]) {
-        const body = await readBody(req);
+        const body = await readBody(req, ['/api/dapp/launch', '/api/dapp/approve'].includes(apiPath) ? 512 * 1024 : 64 * 1024);
         out = await POST_ROUTES[apiPath](body, clientIp(req), surface, req);
       } else {
         throw httpError(404, 'no such endpoint');

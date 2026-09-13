@@ -74,12 +74,12 @@ function validateOperations(operations) {
   return operations;
 }
 
-function addRequest(session, { operations, summary, transaction }) {
+function addRequest(session, { operations, summary, transaction, mode = 'broadcast' }) {
   if (!session.address) throw new Error('connect the wallet first');
   if ([...session.requests.values()].some((r) => r.status === 'pending')) throw new Error('finish the pending wallet request first');
   const id = token(18);
   const request = {
-    id, operations: validateOperations(operations), transaction,
+    id, operations: mode === 'launch' ? operations : validateOperations(operations), transaction, mode,
     summary: {
       title: cleanText(summary && summary.title, 80) || 'Transaction request',
       detail: cleanText(summary && summary.detail, 300),
@@ -94,7 +94,7 @@ function addRequest(session, { operations, summary, transaction }) {
 
 function pending(session) {
   return [...session.requests.values()].filter((r) => r.status === 'pending').map((r) => ({
-    id: r.id, summary: r.summary, transaction: r.transaction, operations: r.operations,
+    id: r.id, summary: r.summary, transaction: r.transaction, operations: r.operations, mode: r.mode,
     createdAt: r.createdAt, expiresAt: r.expires,
   }));
 }
