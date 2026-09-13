@@ -34,6 +34,11 @@ const http = require('node:http');
     const blocked = await fetch(base + '/api/config');
     assert.equal(blocked.status, 503);
     assert.match((await blocked.json()).error, /starting/i);
+    const starting = await (await fetch(base + '/api/health')).json();
+    assert.equal(starting.startup.stage, 'probing-rpc');
+    assert.match(starting.startup.instance, /^[0-9a-f-]{36}$/);
+    assert.equal(typeof starting.startup.uptimeSeconds, 'number');
+    assert.ok(!JSON.stringify(starting).includes(dir), 'No filesystem paths exposed');
     child.send('release');
     const readyDeadline = Date.now() + 3000;
     let config;
@@ -43,6 +48,9 @@ const http = require('node:http');
       await new Promise(r => setTimeout(r, 40));
     }
     assert.equal(config?.demo, true);
+    const ready = await (await fetch(base + '/api/health')).json();
+    assert.equal(ready.startup.instance, starting.startup.instance);
+    assert.equal(ready.startup.stage, 'ready');
     assert.match(config.note, /simulated RPC outage/);
     console.log('✓ HTTP starts before RPC; APIs stay gated until initialization completes');
   } finally {

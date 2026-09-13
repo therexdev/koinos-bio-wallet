@@ -97,6 +97,16 @@ const CFG = {
 
 let DEMO = CFG.demo;
 let BOOTING = true;
+const BOOT_ID = require('node:crypto').randomUUID();
+const BOOT_STARTED = Date.now();
+let BOOT_STAGE = 'initializing';
+function bootStage(stage) {
+  BOOT_STAGE = stage;
+  console.log(`startup: ${BOOT_ID} ${stage}`);
+}
+function bootStatus() {
+  return { instance: BOOT_ID, uptimeSeconds: Math.floor((Date.now() - BOOT_STARTED) / 1000), stage: BOOT_STAGE };
+}
 const prices = createPrices({
   chain, network: CFG.network, ethProvider: priceEthProvider, ethSwap,
   coingecko: process.env.PRICES_COINGECKO !== '0',
@@ -1010,7 +1020,7 @@ const server = http.createServer(async (req, res) => {
     if (apiPath.startsWith('/api/')) {
       if (BOOTING) {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '3' });
-        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.' }));
+        return res.end(JSON.stringify({ error: 'Wallet is starting. Please reload in a few seconds.', ...(apiPath === '/api/health' ? { startup: bootStatus() } : {}) }));
       }
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       if (apiPath.startsWith('/api/dapp/') && CFG.dappOrigins.includes(origin)) {
@@ -1028,6 +1038,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && GET_ROUTES[apiPath]) {
         if (surface.android && apiPath === '/api/health') url.searchParams.delete('rail');
         out = await GET_ROUTES[apiPath](url.searchParams, surface);
+        if (apiPath === '/api/health') out = { ...out, startup: bootStatus() };
         if (apiPath === '/api/config') {
           out = { ...out, client: surface.android ? 'android' : 'web', features: { buy: !surface.android } };
           if (surface.android) { delete out.float; delete out.solRail; }
@@ -1066,8 +1077,10 @@ server.listen(CFG.port, () => {
 });
 
 async function connectChain() {
+  if (BOOTING) bootStage('probing-rpc');
   const rpcUrls = await pickRpcs(CFG.network);
   chain.configure({ network: CFG.network, rpcs: rpcUrls, sponsorWif: CFG.sponsorWif, modules: CFG.modules });
+  if (BOOTING) bootStage('reading-sponsor-balances');
   const [sponsorMana, sponsorKoin] = await Promise.all([
     chain.mana(chain.sponsorAddress()), chain.koinBalance(chain.sponsorAddress()),
   ]);
@@ -1126,8 +1139,10 @@ function applyMode() {
     console.log('WARNING:  ' + w);
   }
 
+  bootStage('loading-wallet-data');
   applyMode();
   BOOTING = false;
+  bootStage('ready');
 
   /* A live-configured server must never stay stuck in demo because one RPC
      probe failed at boot: keep retrying and flip to live when the chain
