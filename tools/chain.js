@@ -226,6 +226,12 @@ async function opKoinTransfer(from, to, valueSats) {
   return operation;
 }
 
+async function opVhpTransfer(from, to, valueSats) {
+  const { operation } = await vhpContract().functions.transfer(
+    { from, to, value: String(valueSats) }, { onlyOperation: true });
+  return operation;
+}
+
 /** Build the exact transaction the visitor must sign: sponsor pays,
     visitor is payee (their nonce, their authority). */
 async function prepareUserTx(userAddr, ops, { rcLimit = K.rcLimit } = {}) {
@@ -843,7 +849,7 @@ module.exports = {
   humanChainError, waitMined, withRpcRetry,
   tokenContractAt, tokenBalanceSats, vhpContract, vhpBalanceSats, tokenMeta,
   net: () => net(),
-  opKoinTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
+  opKoinTransfer, opVhpTransfer, prepareUserTx, submitCosigned, verifyAuthSignature,
   /* Veive smart-account layer */
   veiveReady, newAccountKey, keyFromWif,
   accountModules, accountCredentials, credentialAddress, credentialRegisteredFor,

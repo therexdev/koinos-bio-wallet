@@ -381,6 +381,7 @@ api.config = async (_params, surface = {}) => {
     networkLabel: net.label,
     testnet: !!net.testnet,
     nativeSymbol: net.nativeSymbol,
+    sendAssets: ['koin', 'vhp'],
     explorer: net.explorer,
     androidApp: CFG.androidFingerprints.length ? CFG.androidPackage : null,
     demo: DEMO,
@@ -640,11 +641,16 @@ api.prepareRegister = async (body, ip) => {
   return { ok: true, ref, tx };
 };
 
-/** Prepare a sponsored KOIN transfer: sponsor pays, the account signs.
+/** Prepare a sponsored KOIN or VHP transfer: sponsor pays, the account signs.
     For smart accounts no proof is needed here — a prepared transaction is
     inert until the passkey signs it and the CHAIN verifies that signature;
     for plain (legacy v1) addresses the secp proof still applies. */
 api.prepare = async (body, ip) => {
+  // Only these native assets are sendable. Never accept a caller's contract
+  // address or silently fall back to KOIN for an unknown asset.
+  const asset = body.asset === undefined ? 'koin' : body.asset;
+  if (asset !== 'koin' && asset !== 'vhp') throw httpError(400, 'choose KOIN or VHP to send');
+  const symbol = asset === 'vhp' ? 'VHP' : NETWORKS[CFG.network].nativeSymbol;
   const smart = veive.isSmartAccount(body.address);
   if (!smart) {
     const err = verifyProof(body, 'transfer');
@@ -661,10 +667,13 @@ api.prepare = async (body, ip) => {
   const address = body.address;
   const to = String(body.to || '').trim();
   if (!chain.isAddr(to)) throw httpError(400, 'a valid destination address is required');
-  if (to === address) throw httpError(400, 'that would send KOIN to yourself');
+  if (to === address) throw httpError(400, `that would send ${symbol} to yourself`);
   const amount = String(body.amount || '').trim();
-  if (!/^\d+(\.\d{1,8})?$/.test(amount) || Number(amount) <= 0) throw httpError(400, 'amount must be a positive number (max 8 decimals)');
-  const sats = BigInt(Math.round(Number(amount) * 1e8));
+  if (!/^\d+(\.\d{1,8})?$/.test(amount)) throw httpError(400, 'amount must be a positive number (max 8 decimals)');
+  const [whole, fraction = ''] = amount.split('.');
+  const sats = BigInt(whole) * 100000000n + BigInt(fraction.padEnd(8, '0'));
+  if (sats <= 0n) throw httpError(400, 'amount must be a positive number (max 8 decimals)');
+  if (sats > 18446744073709551615n) throw httpError(400, 'amount exceeds the token transfer limit');
 
   if (rateLimited('tx:addr:' + address, CFG.maxTransfersPerDayAddr, 24 * 3600000)) {
     throw httpError(429, 'that account has sent a lot today — come back tomorrow');
@@ -678,21 +687,21 @@ api.prepare = async (body, ip) => {
        real — submit then verifies the packed signature like the live path. */
     const id = demoTxid();
     const ref = rememberPrepared(id, address, { demo: true, smart });
-    return { ok: true, demo: true, ref, tx: { id } };
+    return { ok: true, demo: true, asset, ref, tx: { id } };
   }
 
-  const balance = BigInt(await chain.koinBalanceSats(address));
-  if (balance < sats) throw httpError(400, `not enough KOIN — you hold ${(Number(balance) / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')}`);
+  const balance = BigInt(await (asset === 'vhp' ? chain.vhpBalanceSats(address) : chain.koinBalanceSats(address)));
+  if (balance < sats) throw httpError(400, `not enough ${symbol} — you hold ${fromSats(balance, 8)}`);
 
   const sponsorMana = await chain.mana(chain.sponsorAddress());
   if (sponsorMana < CFG.minSponsorMana) {
     throw httpError(503, 'the sponsor wallet is recharging its mana — try again in a few minutes');
   }
 
-  const ops = [await chain.opKoinTransfer(address, to, sats.toString())];
+  const ops = [await (asset === 'vhp' ? chain.opVhpTransfer(address, to, sats.toString()) : chain.opKoinTransfer(address, to, sats.toString()))];
   const tx = await chain.prepareUserTx(address, ops, smart ? { rcLimit: chain.K.rcLimitSmart } : {});
   const ref = rememberPrepared(tx.id, address, { smart });
-  return { ok: true, ref, tx };
+  return { ok: true, asset, ref, tx };
 };
 
 /** Broadcast a signed prepared transaction (sponsor co-signs as payer).
